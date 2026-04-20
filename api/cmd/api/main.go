@@ -5,6 +5,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"time"
 
 	"github.com/databasus-new/api/internal/config"
 	"github.com/databasus-new/api/internal/handlers"
@@ -15,33 +16,27 @@ import (
 )
 
 func main() {
-	// 加载环境变量
 	if err := godotenv.Load(); err != nil {
 		log.Println("Warning: .env file not found")
 	}
 
-	// 加载配置
 	cfg := config.Load()
 
-	// 初始化数据库
 	db, err := database.InitPostgres(cfg.Database)
 	if err != nil {
 		log.Printf("Warning: Failed to connect to database: %v", err)
 		log.Println("Server will start without database connection")
 	} else {
-		// 运行数据库迁移
 		if err := database.RunMigrations(db); err != nil {
 			log.Printf("Warning: Failed to run database migrations: %v", err)
 		}
 	}
 
-	// 初始化Redis（可选）
 	redisClient, err := database.InitRedis(cfg.Redis)
 	if err != nil {
 		log.Println("Warning: Failed to connect to Redis:", err)
 	}
 
-	// 初始化调度器
 	if db != nil {
 		taskScheduler := scheduler.NewScheduler(db, redisClient, cfg.Backup.StoragePath)
 		taskScheduler.Start(5)
@@ -55,37 +50,54 @@ func main() {
 			cfg.Backup.StoragePath, cfg.Backup.RetentionDays)
 	}
 
-	// 初始化Gin路由
 	router := gin.Default()
 
-	// 添加CORS中间件
 	router.Use(func(c *gin.Context) {
 		c.Writer.Header().Set("Access-Control-Allow-Origin", "*")
-		c.Writer.Header().Set("Access-Control-Allow-Credentials", "true")
-		c.Writer.Header().Set("Access-Control-Allow-Headers", "Content-Type, Content-Length, Accept-Encoding, X-CSRF-Token, Authorization, accept, origin, Cache-Control, X-Requested-With")
-		c.Writer.Header().Set("Access-Control-Allow-Methods", "POST, OPTIONS, GET, PUT, DELETE")
-
+		c.Writer.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
+		c.Writer.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
 		if c.Request.Method == "OPTIONS" {
 			c.AbortWithStatus(http.StatusNoContent)
 			return
 		}
-
 		c.Next()
 	})
 
-	// 初始化处理器
-	handlers.SetupRoutes(router, db, redisClient, cfg)
+	router.GET("/", func(c *gin.Context) {
+		c.JSON(http.StatusOK, gin.H{
+			"status":  "ok",
+			"message": "DatabasUS API Server",
+		})
+	})
 
-	// 获取端口
-	port := os.Getenv("PORT")
-	if port == "" {
-		port = cfg.Server.Port
+	auth := router.Group("/auth")
+	{
+		auth.POST("/login", handlers.Login)
 	}
 
-	// 启动服务器
-	addr := fmt.Sprintf(":%s", port)
-	log.Printf("Server starting on %s", addr)
-	if err := router.Run(addr); err != nil {
-		log.Fatalf("Failed to start server: %v", err)
+	api := router.Group("/api")
+	api.Use(handlers.AuthMiddleware())
+	{
+		api.GET("/workspace/stats", handlers.GetWorkspaceStats)
+		api.GET("/databases", handlers.GetDatabases)
+		api.POST("/databases", handlers.CreateDatabase)
+		api.DELETE("/databases/:id", handlers.DeleteDatabase)
+		api.GET("/backups", handlers.GetBackups)
+		api.POST("/backups", handlers.CreateBackup)
+		api.DELETE("/backups/:id", handlers.DeleteBackup)
+		api.GET("/restores", handlers.GetRestores)
+		api.POST("/restores", handlers.CreateRestore)
+		api.GET("/settings", handlers.GetSettings)
+		api.PUT("/settings", handlers.UpdateSettings)
+	}
+
+	port := os.Getenv("PORT")
+	if port == "" {
+		port = "6001"
+	}
+
+	log.Printf("Server starting on port %s", port)
+	if err := router.Run(":" + port); err != nil {
+		log.Fatal(err)
 	}
 }
