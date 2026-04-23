@@ -14,12 +14,15 @@ type Config struct {
 }
 
 type DatabaseConfig struct {
-	Host     string
-	Port     string
-	User     string
-	Password string
-	DBName   string
-	SSLMode  string
+	Host                   string
+	Port                   string
+	User                   string
+	Password               string
+	DBName                 string
+	SSLMode                string
+	MaxOpenConns           int
+	MaxIdleConns           int
+	ConnMaxLifetimeMinutes int
 }
 
 type RedisConfig struct {
@@ -38,9 +41,9 @@ type ServerConfig struct {
 }
 
 type BackupConfig struct {
-	StoragePath string
-	RetentionDays int
-	MaxBackupSize int64
+	StoragePath    string
+	RetentionDays  int
+	MaxBackupSize  int64
 }
 
 func Load() *Config {
@@ -54,13 +57,20 @@ func Load() *Config {
 }
 
 func loadDatabaseConfig() DatabaseConfig {
+	maxOpenConns, _ := strconv.Atoi(getEnv("DB_MAX_OPEN_CONNS", "25"))
+	maxIdleConns, _ := strconv.Atoi(getEnv("DB_MAX_IDLE_CONNS", "10"))
+	connMaxLifetime, _ := strconv.Atoi(getEnv("DB_CONN_MAX_LIFETIME_MINUTES", "30"))
+
 	return DatabaseConfig{
-		Host:     getEnv("DB_HOST", "localhost"),
-		Port:     getEnv("DB_PORT", "5432"),
-		User:     getEnv("DB_USER", "postgres"),
-		Password: getEnv("DB_PASSWORD", "postgres"),
-		DBName:   getEnv("DB_NAME", "databasus"),
-		SSLMode:  getEnv("DB_SSLMODE", "disable"),
+		Host:                   getEnv("DB_HOST", "localhost"),
+		Port:                   getEnv("DB_PORT", "5432"),
+		User:                   getEnv("DB_USER", "postgres"),
+		Password:               getEnv("DB_PASSWORD", "postgres"),
+		DBName:                 getEnv("DB_NAME", "databasus"),
+		SSLMode:                getEnv("DB_SSLMODE", "disable"),
+		MaxOpenConns:           maxOpenConns,
+		MaxIdleConns:           maxIdleConns,
+		ConnMaxLifetimeMinutes: connMaxLifetime,
 	}
 }
 
@@ -74,9 +84,14 @@ func loadRedisConfig() RedisConfig {
 }
 
 func loadJWTConfig() JWTConfig {
+	jwtSecret := getEnv("JWT_SECRET", "")
+	if jwtSecret == "" {
+		panic("JWT_SECRET environment variable is required")
+	}
+
 	expiresIn, _ := strconv.Atoi(getEnv("JWT_EXPIRES_IN", "24"))
 	return JWTConfig{
-		Secret:    getEnv("JWT_SECRET", "your-secret-key"),
+		Secret:    jwtSecret,
 		ExpiresIn: expiresIn,
 	}
 }
@@ -91,9 +106,9 @@ func loadBackupConfig() BackupConfig {
 	retentionDays, _ := strconv.Atoi(getEnv("BACKUP_RETENTION_DAYS", "7"))
 	maxBackupSize, _ := strconv.ParseInt(getEnv("BACKUP_MAX_SIZE", "107374182400"), 10, 64)
 	return BackupConfig{
-		StoragePath:    getEnv("BACKUP_STORAGE_PATH", "/tmp/backups"),
-		RetentionDays:  retentionDays,
-		MaxBackupSize:  maxBackupSize,
+		StoragePath:   getEnv("BACKUP_STORAGE_PATH", "/tmp/backups"),
+		RetentionDays: retentionDays,
+		MaxBackupSize: maxBackupSize,
 	}
 }
 

@@ -1,16 +1,20 @@
 package scheduler
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
 	"log"
 	"os"
+	"os/exec"
+	"path/filepath"
 	"sync"
 	"time"
 
 	"github.com/databasus-new/api/internal/models"
 	"github.com/databasus-new/api/pkg/restore"
+	"github.com/databasus-new/api/pkg/websocket"
 	"github.com/redis/go-redis/v9"
 	"gorm.io/gorm"
 )
@@ -23,6 +27,7 @@ const (
 	TaskStatusSuccess   TaskStatus = "success"
 	TaskStatusFailed    TaskStatus = "failed"
 	TaskStatusRetrying  TaskStatus = "retrying"
+	TaskStatusCancelled TaskStatus = "cancelled"
 )
 
 type TaskType string
@@ -36,8 +41,8 @@ type Task struct {
 	ID          uint       `json:"id"`
 	Type        TaskType   `json:"type"`
 	Status      TaskStatus `json:"status"`
-	RetryCount  int       `json:"retry_count"`
-	MaxRetries  int       `json:"max_retries"`
+	RetryCount  int        `json:"retry_count"`
+	MaxRetries  int        `json:"max_retries"`
 	ErrorMsg    string     `json:"error_msg,omitempty"`
 	StartedAt   *time.Time `json:"started_at,omitempty"`
 	CompletedAt *time.Time `json:"completed_at,omitempty"`
@@ -47,14 +52,24 @@ type Task struct {
 
 type TaskPayload struct {
 	Type         TaskType            `json:"type"`
-	TaskID       uint               `json:"task_id"`
-	WorkspaceID  uint               `json:"workspace_id"`
-	DatabaseID   uint               `json:"database_id"`
-	DatabaseType string             `json:"database_type"`
-	BackupType   string             `json:"backup_type,omitempty"`
-	BackupID     uint               `json:"backup_id,omitempty"`
-	PITRTime    *time.Time         `json:"pitr_time,omitempty"`
-	Config      map[string]any     `json:"config,omitempty"`
+	TaskID       uint                `json:"task_id"`
+	WorkspaceID  uint                `json:"workspace_id"`
+	DatabaseID   uint                `json:"database_id"`
+	DatabaseType string              `json:"database_type"`
+	BackupType   string              `json:"backup_type,omitempty"`
+	BackupID     uint                `json:"backup_id,omitempty"`
+	PITRTime    *time.Time          `json:"pitr_time,omitempty"`
+	Config      map[string]any      `json:"config,omitempty"`
+}
+
+type BackupProgress struct {
+	TaskID      uint     `json:"task_id"`
+	BackupID    uint     `json:"backup_id"`
+	DatabaseID  uint     `json:"database_id"`
+	Status      string   `json:"status"`
+	Progress    float64  `json:"progress"`
+	Message     string   `json:"message"`
+	StartedAt   time.Time `json:"started_at"`
 }
 
 type Scheduler struct {
@@ -67,6 +82,7 @@ type Scheduler struct {
 	maxRetries    int
 	retryInterval time.Duration
 	storagePath   string
+	progressMap   sync.Map
 }
 
 var (
@@ -100,6 +116,7 @@ func GetScheduler() *Scheduler {
 
 func (s *Scheduler) Start(workerCount int) {
 	log.Println("Starting task scheduler with", workerCount, "workers")
+	websocket.NewHub()
 	for i := 0; i < workerCount; i++ {
 		s.wg.Add(1)
 		go s.worker(i)
@@ -169,6 +186,8 @@ func (s *Scheduler) processTask(payload TaskPayload) {
 		log.Printf("Failed to create task record: %v", err)
 	}
 
+	s.broadcastProgress(payload, "running", 0, "任务开始执行")
+
 	var err error
 	switch payload.Type {
 	case TaskTypeBackup:
@@ -187,6 +206,9 @@ func (s *Scheduler) processTask(payload TaskPayload) {
 
 		if payload.Type == TaskTypeBackup {
 			s.updateBackupStatus(payload.BackupID, "failed", err.Error())
+			s.broadcastProgress(payload, "failed", 100, fmt.Sprintf("备份失败: %v", err))
+		} else {
+			s.broadcastProgress(payload, "failed", 100, fmt.Sprintf("恢复失败: %v", err))
 		}
 	} else {
 		task.Status = string(TaskStatusSuccess)
@@ -194,6 +216,9 @@ func (s *Scheduler) processTask(payload TaskPayload) {
 
 		if payload.Type == TaskTypeBackup {
 			s.updateBackupStatus(payload.BackupID, "success", "")
+			s.broadcastProgress(payload, "success", 100, "任务执行成功")
+		} else {
+			s.broadcastProgress(payload, "success", 100, "恢复任务执行成功")
 		}
 	}
 
@@ -202,6 +227,31 @@ func (s *Scheduler) processTask(payload TaskPayload) {
 
 	if err != nil && payload.Type == TaskTypeBackup {
 		s.handleTaskFailure(payload, err)
+	}
+}
+
+func (s *Scheduler) broadcastProgress(payload TaskPayload, status string, progress float64, message string) {
+	progressUpdate := &websocket.ProgressUpdate{
+		TaskID:   payload.TaskID,
+		Type:     string(payload.Type),
+		Status:   status,
+		Progress: progress,
+		Message:  message,
+	}
+
+	if payload.BackupID > 0 {
+		progressUpdate.BackupID = payload.BackupID
+	}
+
+	hub := websocket.GetHub()
+	if hub != nil {
+		hub.BroadcastProgress(progressUpdate)
+	}
+
+	key := fmt.Sprintf("progress:%s:%d", payload.Type, payload.TaskID)
+	progressData, _ := json.Marshal(progressUpdate)
+	if s.redisClient != nil {
+		s.redisClient.Set(context.Background(), key, progressData, 24*time.Hour)
 	}
 }
 
@@ -232,31 +282,72 @@ func (s *Scheduler) executeBackup(payload TaskPayload) error {
 		}
 	}
 
+	s.broadcastProgress(payload, "running", 10, "正在准备备份环境")
+
+	var backupPath string
+	var size int64
+	var err error
+
 	switch payload.DatabaseType {
 	case "mysql":
 		mysqlDB := dbInfo.(models.MySQLDatabase)
-		backupPath, size, bErr := s.performMySQLBackup(payload, mysqlDB, storagePath)
-		if bErr != nil {
-			return bErr
+		s.broadcastProgress(payload, "running", 20, "开始执行MySQL物理备份")
+		backupPath, size, err = s.performMySQLBackup(payload, mysqlDB, storagePath)
+		if err != nil {
+			return err
 		}
-		s.updateBackupFileInfo(payload.BackupID, backupPath, size)
+		s.broadcastProgress(payload, "running", 80, "正在压缩备份文件")
+		compressedPath, compressErr := s.compressBackup(backupPath)
+		if compressErr != nil {
+			log.Printf("Compression failed, using original path: %v", compressErr)
+		} else {
+			backupPath = compressedPath
+			size = GetFileSize(backupPath)
+		}
 	case "postgresql":
 		pgDB := dbInfo.(models.PostgreSQLDatabase)
-		backupPath, size, bErr := s.performPostgreSQLBackup(payload, pgDB, storagePath)
-		if bErr != nil {
-			return bErr
+		s.broadcastProgress(payload, "running", 20, "开始执行PostgreSQL物理备份")
+		backupPath, size, err = s.performPostgreSQLBackup(payload, pgDB, storagePath)
+		if err != nil {
+			return err
 		}
-		s.updateBackupFileInfo(payload.BackupID, backupPath, size)
+		s.broadcastProgress(payload, "running", 80, "正在压缩备份文件")
 	}
+
+	s.broadcastProgress(payload, "running", 95, "正在保存备份信息")
+	s.updateBackupFileInfo(payload.BackupID, backupPath, size)
 
 	return nil
 }
 
+func (s *Scheduler) compressBackup(sourcePath string) (string, error) {
+	filename := filepath.Base(sourcePath)
+	compressedFile := sourcePath + ".tar.gz"
+
+	cmd := exec.Command("tar", "-czf", compressedFile, "-C", filepath.Dir(sourcePath), filename)
+	if err := cmd.Run(); err != nil {
+		return "", fmt.Errorf("failed to compress backup: %w", err)
+	}
+
+	os.RemoveAll(sourcePath)
+
+	return compressedFile, nil
+}
+
 func (s *Scheduler) performMySQLBackup(payload TaskPayload, db models.MySQLDatabase, storagePath string) (string, int64, error) {
 	timestamp := time.Now().Format("20060102150405")
-	backupDir := fmt.Sprintf("%s/mysql_%s_%d", storagePath, timestamp, payload.BackupID)
+	backupDir := filepath.Join(storagePath, fmt.Sprintf("mysql_backup_%s_%d", timestamp, payload.BackupID))
 
-	cmd := NewCommand("xtrabackup",
+	if err := os.MkdirAll(backupDir, 0755); err != nil {
+		return "", 0, fmt.Errorf("failed to create backup directory: %w", err)
+	}
+
+	xtrabackupPath := db.XtraBackupPath
+	if xtrabackupPath == "" {
+		xtrabackupPath = "xtrabackup"
+	}
+
+	cmd := exec.CommandContext(context.Background(), xtrabackupPath,
 		"--backup",
 		"--target-dir="+backupDir,
 		"--host="+db.Host,
@@ -265,12 +356,14 @@ func (s *Scheduler) performMySQLBackup(payload TaskPayload, db models.MySQLDatab
 		"--password="+db.Password,
 	)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
-	defer cancel()
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
 
-	output, err := cmd.Run(ctx)
+	err := cmd.Run()
 	if err != nil {
-		return "", 0, fmt.Errorf("xtrabackup failed: %w, output: %s", err, string(output))
+		s.broadcastProgress(payload, "failed", 0, fmt.Sprintf("xtrabackup执行失败: %s", stderr.String()))
+		return "", 0, fmt.Errorf("xtrabackup failed: %w, output: %s", err, stderr.String())
 	}
 
 	size := CalculateDirSize(backupDir)
@@ -279,9 +372,9 @@ func (s *Scheduler) performMySQLBackup(payload TaskPayload, db models.MySQLDatab
 
 func (s *Scheduler) performPostgreSQLBackup(payload TaskPayload, db models.PostgreSQLDatabase, storagePath string) (string, int64, error) {
 	timestamp := time.Now().Format("20060102150405")
-	backupFile := fmt.Sprintf("%s/postgresql_%s_%d.tar.gz", storagePath, timestamp, payload.BackupID)
+	backupFile := filepath.Join(storagePath, fmt.Sprintf("postgresql_backup_%s_%d.tar.gz", timestamp, payload.BackupID))
 
-	cmd := NewCommand("pg_basebackup",
+	cmd := exec.Command("pg_basebackup",
 		"--host="+db.Host,
 		fmt.Sprintf("--port=%d", db.Port),
 		"--username="+db.User,
@@ -290,12 +383,16 @@ func (s *Scheduler) performPostgreSQLBackup(payload TaskPayload, db models.Postg
 		"--file="+backupFile,
 	)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
-	defer cancel()
+	cmd.Env = append(os.Environ(), fmt.Sprintf("PGPASSWORD=%s", db.Password))
 
-	output, err := cmd.Run(ctx)
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+
+	err := cmd.Run()
 	if err != nil {
-		return "", 0, fmt.Errorf("pg_basebackup failed: %w, output: %s", err, string(output))
+		s.broadcastProgress(payload, "failed", 0, fmt.Sprintf("pg_basebackup执行失败: %s", stderr.String()))
+		return "", 0, fmt.Errorf("pg_basebackup failed: %w, output: %s", err, stderr.String())
 	}
 
 	size := GetFileSize(backupFile)
@@ -311,6 +408,15 @@ func (s *Scheduler) executeRestore(payload TaskPayload) error {
 	if backup.FilePath == "" {
 		return fmt.Errorf("backup file path is empty")
 	}
+
+	s.broadcastProgress(payload, "running", 10, "正在验证备份文件")
+
+	verifyResult, err := VerifyBackup(backup.FilePath, payload.DatabaseType)
+	if err != nil || !verifyResult.IsValid {
+		return fmt.Errorf("backup verification failed: %v, %s", err, verifyResult.ErrorMsg)
+	}
+
+	s.broadcastProgress(payload, "running", 20, "备份文件验证通过")
 
 	switch payload.DatabaseType {
 	case "mysql":
@@ -349,34 +455,73 @@ func (s *Scheduler) performMySQLRestore(payload TaskPayload, backup models.Backu
 
 	mysqlDB := dbInfo.(models.MySQLDatabase)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
-	defer cancel()
+	s.broadcastProgress(payload, "running", 30, "正在准备恢复环境")
 
-	if payload.PITRTime != nil {
-		err = restore.MySQLPITRRestore(ctx, mysqlDB, backup.FilePath, payload.PITRTime)
-	} else {
-		cmd := NewCommand("xtrabackup",
-			"--prepare",
-			"--target-dir="+backup.FilePath,
-		)
-
-		output, err := cmd.Run(ctx)
-		if err != nil {
-			return fmt.Errorf("xtrabackup prepare failed: %w, output: %s", err, string(output))
-		}
-
-		cmd = NewCommand("xtrabackup",
-			"--copy-back",
-			"--target-dir="+backup.FilePath,
-		)
-
-		output, err = cmd.Run(ctx)
-		if err != nil {
-			return fmt.Errorf("xtrabackup copy-back failed: %w, output: %s", err, string(output))
-		}
+	xtrabackupPath := mysqlDB.XtraBackupPath
+	if xtrabackupPath == "" {
+		xtrabackupPath = "xtrabackup"
 	}
 
-	return err
+	s.broadcastProgress(payload, "running", 40, "正在执行xtrabackup prepare")
+
+	prepareCmd := exec.CommandContext(context.Background(), xtrabackupPath,
+		"--prepare",
+		"--target-dir="+backup.FilePath,
+	)
+	prepareCmd.Run()
+
+	if payload.PITRTime != nil && mysqlDB.BinaryLogEnabled {
+		s.broadcastProgress(payload, "running", 60, fmt.Sprintf("正在执行PITR时间点恢复至: %s", payload.PITRTime.Format("2006-01-02 15:04:05")))
+		err = restore.MySQLPITRRestore(context.Background(), mysqlDB, backup.FilePath, payload.PITRTime)
+	} else {
+		s.broadcastProgress(payload, "running", 70, "正在复制备份文件到数据目录")
+		err = s.directMySQLRestore(mysqlDB, backup.FilePath, xtrabackupPath)
+	}
+
+	if err != nil {
+		s.broadcastProgress(payload, "failed", 0, fmt.Sprintf("恢复失败: %v", err))
+		return err
+	}
+
+	s.broadcastProgress(payload, "success", 100, "数据库恢复成功")
+	return nil
+}
+
+func (s *Scheduler) directMySQLRestore(db models.MySQLDatabase, backupPath, xtrabackupPath string) error {
+	serviceName := "mysql"
+	if db.InstanceID != "" {
+		serviceName = fmt.Sprintf("mysql-%s", db.InstanceID)
+	}
+
+	stopCmd := exec.CommandContext(context.Background(), "systemctl", "stop", serviceName)
+	if err := stopCmd.Run(); err != nil {
+		log.Printf("Warning: failed to stop MySQL: %v", err)
+	}
+
+	dataDir := db.DataDirectory
+	if dataDir == "" {
+		dataDir = "/var/lib/mysql"
+	}
+
+	clearCmd := exec.CommandContext(context.Background(), "rm", "-rf", dataDir+"/*")
+	if err := clearCmd.Run(); err != nil {
+		return fmt.Errorf("failed to clear data directory: %w", err)
+	}
+
+	copyCmd := exec.CommandContext(context.Background(), "cp", "-r", backupPath+"/", dataDir)
+	if err := copyCmd.Run(); err != nil {
+		return fmt.Errorf("failed to copy backup to data directory: %w", err)
+	}
+
+	chownCmd := exec.CommandContext(context.Background(), "chown", "-R", "mysql:mysql", dataDir)
+	chownCmd.Run()
+
+	startCmd := exec.CommandContext(context.Background(), "systemctl", "start", serviceName)
+	if err := startCmd.Run(); err != nil {
+		return fmt.Errorf("failed to start MySQL service: %w", err)
+	}
+
+	return nil
 }
 
 func (s *Scheduler) performPostgreSQLRestore(payload TaskPayload, backup models.Backup) error {
@@ -387,27 +532,84 @@ func (s *Scheduler) performPostgreSQLRestore(payload TaskPayload, backup models.
 
 	pgDB := dbInfo.(models.PostgreSQLDatabase)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
-	defer cancel()
+	s.broadcastProgress(payload, "running", 30, "正在准备恢复环境")
 
 	if payload.PITRTime != nil {
-		err = restore.PostgreSQLPITRRestore(ctx, pgDB, backup.FilePath, payload.PITRTime)
+		s.broadcastProgress(payload, "running", 40, fmt.Sprintf("正在执行PITR时间点恢复至: %s", payload.PITRTime.Format("2006-01-02 15:04:05")))
+		err = restore.PostgreSQLPITRRestore(context.Background(), pgDB, backup.FilePath, payload.PITRTime)
 	} else {
-		restoreDir := backup.FilePath + "_restore"
+		s.broadcastProgress(payload, "running", 50, "正在解压备份文件")
+		err = s.directPostgreSQLRestore(pgDB, backup.FilePath)
+	}
 
-		cmd := NewCommand("mkdir", "-p", restoreDir)
-		if _, err := cmd.Run(context.Background()); err != nil {
-			return fmt.Errorf("failed to create restore directory: %w", err)
-		}
+	if err != nil {
+		s.broadcastProgress(payload, "failed", 0, fmt.Sprintf("恢复失败: %v", err))
+		return err
+	}
 
-		cmd = NewCommand("tar", "-xzf", backup.FilePath, "-C", restoreDir)
-		output, err := cmd.Run(ctx)
-		if err != nil {
-			return fmt.Errorf("failed to extract backup: %w, output: %s", err, string(output))
+	s.broadcastProgress(payload, "success", 100, "数据库恢复成功")
+	return nil
+}
+
+func (s *Scheduler) directPostgreSQLRestore(db models.PostgreSQLDatabase, backupFile string) error {
+	timestamp := time.Now().Format("20060102150405")
+	restoreDir := filepath.Join(os.TempDir(), fmt.Sprintf("pg_restore_%s", timestamp))
+
+	if err := os.MkdirAll(restoreDir, 0755); err != nil {
+		return fmt.Errorf("failed to create restore directory: %w", err)
+	}
+	defer os.RemoveAll(restoreDir)
+
+	serviceName := "postgresql"
+	if db.InstanceID != "" {
+		serviceName = fmt.Sprintf("postgresql-%s", db.InstanceID)
+	}
+
+	stopCmd := exec.CommandContext(context.Background(), "systemctl", "stop", serviceName)
+	if err := stopCmd.Run(); err != nil {
+		log.Printf("Warning: failed to stop PostgreSQL: %v", err)
+	}
+
+	dataDir := db.DataDirectory
+	if dataDir == "" {
+		dataDir = "/var/lib/postgresql/data"
+		if db.DatabaseName != "" {
+			dataDir = filepath.Join("/var/lib/postgresql", db.DatabaseName, "data")
 		}
 	}
 
-	return err
+	untarCmd := exec.CommandContext(context.Background(), "tar", "-xzf", backupFile, "-C", restoreDir)
+	if err := untarCmd.Run(); err != nil {
+		return fmt.Errorf("failed to extract backup: %w", err)
+	}
+
+	clearCmd := exec.CommandContext(context.Background(), "rm", "-rf", dataDir+"/*")
+	if err := clearCmd.Run(); err != nil {
+		return fmt.Errorf("failed to clear data directory: %w", err)
+	}
+
+	entries, err := os.ReadDir(restoreDir)
+	if err != nil {
+		return fmt.Errorf("failed to read restore directory: %w", err)
+	}
+
+	for _, entry := range entries {
+		src := filepath.Join(restoreDir, entry.Name())
+		dst := filepath.Join(dataDir, entry.Name())
+		if err := os.Rename(src, dst); err != nil {
+			return fmt.Errorf("failed to move files: %w", err)
+		}
+	}
+
+	chownCmd := exec.CommandContext(context.Background(), "chown", "-R", "postgres:postgres", dataDir)
+	chownCmd.Run()
+
+	startCmd := exec.CommandContext(context.Background(), "systemctl", "start", serviceName)
+	if err := startCmd.Run(); err != nil {
+		return fmt.Errorf("failed to start PostgreSQL service: %w", err)
+	}
+
+	return nil
 }
 
 func (s *Scheduler) updateBackupStatus(backupID uint, status, errorMsg string) {
@@ -469,10 +671,10 @@ func (s *Scheduler) sendAlert(payload TaskPayload, errorMsg string) {
 
 	if s.redisClient != nil {
 		alert := map[string]interface{}{
-			"type":       "backup_failed",
+			"type":        "backup_failed",
 			"database_id": payload.DatabaseID,
-			"error":      errorMsg,
-			"time":       time.Now().Format(time.RFC3339),
+			"error":       errorMsg,
+			"time":        time.Now().Format(time.RFC3339),
 		}
 		alertJSON, _ := json.Marshal(alert)
 		s.redisClient.Publish(s.ctx, "alerts", string(alertJSON))
@@ -492,13 +694,13 @@ func (s *Scheduler) EnqueueTask(payload TaskPayload) bool {
 
 func (s *Scheduler) EnqueueBackupTask(backup *models.Backup) {
 	payload := TaskPayload{
-		Type:        TaskTypeBackup,
-		TaskID:      backup.ID,
-		WorkspaceID: backup.WorkspaceID,
-		DatabaseID:  backup.DatabaseID,
+		Type:         TaskTypeBackup,
+		TaskID:       backup.ID,
+		WorkspaceID:  backup.WorkspaceID,
+		DatabaseID:   backup.DatabaseID,
 		DatabaseType: backup.DatabaseType,
-		BackupType:  backup.BackupType,
-		BackupID:    backup.ID,
+		BackupType:   backup.BackupType,
+		BackupID:     backup.ID,
 	}
 	s.EnqueueTask(payload)
 }
@@ -512,6 +714,10 @@ func (s *Scheduler) EnqueueRestoreTask(restore *models.Restore) {
 		BackupID:     restore.BackupID,
 		PITRTime:    restore.PITRTime,
 	}
+	s.EnqueueTask(payload)
+}
+
+func (s *Scheduler) EnqueueRestoreTaskWithConfig(payload TaskPayload) {
 	s.EnqueueTask(payload)
 }
 
@@ -555,4 +761,18 @@ func (s *Scheduler) cleanupOldBackups(retentionDays int) {
 	}
 
 	log.Printf("Backup cleanup completed, deleted %d old backups", deletedCount)
+}
+
+func (s *Scheduler) GetTaskProgress(taskID uint, taskType TaskType) *websocket.ProgressUpdate {
+	key := fmt.Sprintf("progress:%s:%d", taskType, taskID)
+	if s.redisClient != nil {
+		data, err := s.redisClient.Get(context.Background(), key).Result()
+		if err == nil {
+			var progress websocket.ProgressUpdate
+			if json.Unmarshal([]byte(data), &progress) == nil {
+				return &progress
+			}
+		}
+	}
+	return nil
 }

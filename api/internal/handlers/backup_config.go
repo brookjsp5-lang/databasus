@@ -3,72 +3,70 @@ package handlers
 import (
 	"net/http"
 	"strconv"
-	"sync"
 
 	"github.com/databasus-new/api/internal/models"
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
 )
 
-// 内存存储备份配置信息
-type memoryBackupConfigStorage struct {
-	configs map[uint]*models.BackupConfig
-	mutex   sync.RWMutex
-	nextID  uint
-}
-
-var (
-	backupConfigMemStorage = &memoryBackupConfigStorage{
-		configs: make(map[uint]*models.BackupConfig),
-		nextID:  1,
-	}
-)
-
-// BackupConfigHandler 备份配置处理器
 type BackupConfigHandler struct {
 	db *gorm.DB
 }
 
-// NewBackupConfigHandler 创建备份配置处理器
 func NewBackupConfigHandler(db *gorm.DB) *BackupConfigHandler {
 	return &BackupConfigHandler{db: db}
 }
 
-// CreateBackupConfigRequest 创建备份配置请求
 type CreateBackupConfigRequest struct {
+	Name            string `json:"name" binding:"required"`
 	WorkspaceID     uint   `json:"workspace_id" binding:"required"`
 	DatabaseID      uint   `json:"database_id" binding:"required"`
 	DatabaseType    string `json:"database_type" binding:"required"`
+	StorageID       uint   `json:"storage_id" binding:"required"`
 	BackupType      string `json:"backup_type" binding:"required"`
+	ScheduleType    string `json:"schedule_type"`
 	CronExpression  string `json:"cron_expression" binding:"required"`
-	RetentionDays   int    `json:"retention_days" binding:"required,min=1"`
+	RetentionType   string `json:"retention_type"`
+	RetentionDays   int    `json:"retention_days" binding:"min=1"`
+	RetentionCount  int    `json:"retention_count"`
+	Compress        bool   `json:"compress"`
+	CompressLevel   int    `json:"compress_level"`
+	EncryptionEnabled bool `json:"encryption_enabled"`
+	EncryptionKey   string `json:"encryption_key,omitempty"`
+	EmailEnabled    bool   `json:"email_enabled"`
+	Email           string `json:"email,omitempty"`
+	WebhookEnabled  bool   `json:"webhook_enabled"`
+	WebhookURL      string `json:"webhook_url,omitempty"`
+	NotifyOnSuccess bool   `json:"notify_on_success"`
+	NotifyOnFailure bool   `json:"notify_on_failure"`
 	IsEnabled       bool   `json:"is_enabled"`
 }
 
-// UpdateBackupConfigRequest 更新备份配置请求
 type UpdateBackupConfigRequest struct {
+	Name            string `json:"name" binding:"required"`
 	DatabaseID      uint   `json:"database_id" binding:"required"`
 	DatabaseType    string `json:"database_type" binding:"required"`
+	StorageID       uint   `json:"storage_id" binding:"required"`
 	BackupType      string `json:"backup_type" binding:"required"`
+	ScheduleType    string `json:"schedule_type"`
 	CronExpression  string `json:"cron_expression" binding:"required"`
-	RetentionDays   int    `json:"retention_days" binding:"required,min=1"`
+	RetentionType   string `json:"retention_type"`
+	RetentionDays   int    `json:"retention_days" binding:"min=1"`
+	RetentionCount  int    `json:"retention_count"`
+	Compress        bool   `json:"compress"`
+	CompressLevel   int    `json:"compress_level"`
+	EncryptionEnabled bool `json:"encryption_enabled"`
+	EncryptionKey   string `json:"encryption_key,omitempty"`
+	EmailEnabled    bool   `json:"email_enabled"`
+	Email           string `json:"email,omitempty"`
+	WebhookEnabled  bool   `json:"webhook_enabled"`
+	WebhookURL      string `json:"webhook_url,omitempty"`
+	NotifyOnSuccess bool   `json:"notify_on_success"`
+	NotifyOnFailure bool   `json:"notify_on_failure"`
 	IsEnabled       bool   `json:"is_enabled"`
 }
 
-// GetAll 获取所有备份配置
 func (h *BackupConfigHandler) GetAll(c *gin.Context) {
-	if h.db == nil {
-		// 使用内存存储
-		backupConfigMemStorage.mutex.RLock()
-		var configs []models.BackupConfig
-		for _, config := range backupConfigMemStorage.configs {
-			configs = append(configs, *config)
-		}
-		backupConfigMemStorage.mutex.RUnlock()
-		c.JSON(http.StatusOK, gin.H{"configs": configs})
-		return
-	}
-
 	var configs []models.BackupConfig
 	if err := h.db.Find(&configs).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get backup configs"})
@@ -78,7 +76,6 @@ func (h *BackupConfigHandler) GetAll(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"configs": configs})
 }
 
-// Create 创建备份配置
 func (h *BackupConfigHandler) Create(c *gin.Context) {
 	var req CreateBackupConfigRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -87,24 +84,28 @@ func (h *BackupConfigHandler) Create(c *gin.Context) {
 	}
 
 	config := models.BackupConfig{
-		WorkspaceID:     req.WorkspaceID,
-		DatabaseID:      req.DatabaseID,
-		DatabaseType:    req.DatabaseType,
-		BackupType:      req.BackupType,
-		CronExpression:  req.CronExpression,
-		RetentionDays:   req.RetentionDays,
-		IsEnabled:       req.IsEnabled,
-	}
-
-	if h.db == nil {
-		// 使用内存存储
-		backupConfigMemStorage.mutex.Lock()
-		config.ID = backupConfigMemStorage.nextID
-		backupConfigMemStorage.configs[config.ID] = &config
-		backupConfigMemStorage.nextID++
-		backupConfigMemStorage.mutex.Unlock()
-		c.JSON(http.StatusCreated, gin.H{"config": config})
-		return
+		Name:              req.Name,
+		WorkspaceID:       req.WorkspaceID,
+		DatabaseID:        req.DatabaseID,
+		DatabaseType:      req.DatabaseType,
+		StorageID:         req.StorageID,
+		BackupType:        req.BackupType,
+		ScheduleType:      req.ScheduleType,
+		CronExpression:    req.CronExpression,
+		RetentionType:     req.RetentionType,
+		RetentionDays:     req.RetentionDays,
+		RetentionCount:    req.RetentionCount,
+		Compress:          req.Compress,
+		CompressLevel:     req.CompressLevel,
+		EncryptionEnabled: req.EncryptionEnabled,
+		EncryptionKey:     req.EncryptionKey,
+		EmailEnabled:      req.EmailEnabled,
+		Email:             req.Email,
+		WebhookEnabled:    req.WebhookEnabled,
+		WebhookURL:        req.WebhookURL,
+		NotifyOnSuccess:   req.NotifyOnSuccess,
+		NotifyOnFailure:   req.NotifyOnFailure,
+		IsEnabled:        req.IsEnabled,
 	}
 
 	if err := h.db.Create(&config).Error; err != nil {
@@ -115,24 +116,10 @@ func (h *BackupConfigHandler) Create(c *gin.Context) {
 	c.JSON(http.StatusCreated, gin.H{"config": config})
 }
 
-// GetByID 根据ID获取备份配置
 func (h *BackupConfigHandler) GetByID(c *gin.Context) {
 	id, err := strconv.ParseUint(c.Param("id"), 10, 32)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid config ID"})
-		return
-	}
-
-	if h.db == nil {
-		// 使用内存存储
-		backupConfigMemStorage.mutex.RLock()
-		config, exists := backupConfigMemStorage.configs[uint(id)]
-		backupConfigMemStorage.mutex.RUnlock()
-		if !exists {
-			c.JSON(http.StatusNotFound, gin.H{"error": "Backup config not found"})
-			return
-		}
-		c.JSON(http.StatusOK, gin.H{"config": config})
 		return
 	}
 
@@ -145,7 +132,6 @@ func (h *BackupConfigHandler) GetByID(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"config": config})
 }
 
-// Update 更新备份配置
 func (h *BackupConfigHandler) Update(c *gin.Context) {
 	id, err := strconv.ParseUint(c.Param("id"), 10, 32)
 	if err != nil {
@@ -159,37 +145,32 @@ func (h *BackupConfigHandler) Update(c *gin.Context) {
 		return
 	}
 
-	if h.db == nil {
-		// 使用内存存储
-		backupConfigMemStorage.mutex.Lock()
-		config, exists := backupConfigMemStorage.configs[uint(id)]
-		if !exists {
-			backupConfigMemStorage.mutex.Unlock()
-			c.JSON(http.StatusNotFound, gin.H{"error": "Backup config not found"})
-			return
-		}
-		config.DatabaseID = req.DatabaseID
-		config.DatabaseType = req.DatabaseType
-		config.BackupType = req.BackupType
-		config.CronExpression = req.CronExpression
-		config.RetentionDays = req.RetentionDays
-		config.IsEnabled = req.IsEnabled
-		backupConfigMemStorage.mutex.Unlock()
-		c.JSON(http.StatusOK, gin.H{"config": config})
-		return
-	}
-
 	var config models.BackupConfig
 	if err := h.db.First(&config, id).Error; err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "Backup config not found"})
 		return
 	}
 
+	config.Name = req.Name
 	config.DatabaseID = req.DatabaseID
 	config.DatabaseType = req.DatabaseType
+	config.StorageID = req.StorageID
 	config.BackupType = req.BackupType
+	config.ScheduleType = req.ScheduleType
 	config.CronExpression = req.CronExpression
+	config.RetentionType = req.RetentionType
 	config.RetentionDays = req.RetentionDays
+	config.RetentionCount = req.RetentionCount
+	config.Compress = req.Compress
+	config.CompressLevel = req.CompressLevel
+	config.EncryptionEnabled = req.EncryptionEnabled
+	config.EncryptionKey = req.EncryptionKey
+	config.EmailEnabled = req.EmailEnabled
+	config.Email = req.Email
+	config.WebhookEnabled = req.WebhookEnabled
+	config.WebhookURL = req.WebhookURL
+	config.NotifyOnSuccess = req.NotifyOnSuccess
+	config.NotifyOnFailure = req.NotifyOnFailure
 	config.IsEnabled = req.IsEnabled
 
 	if err := h.db.Save(&config).Error; err != nil {
@@ -200,26 +181,10 @@ func (h *BackupConfigHandler) Update(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"config": config})
 }
 
-// Delete 删除备份配置
 func (h *BackupConfigHandler) Delete(c *gin.Context) {
 	id, err := strconv.ParseUint(c.Param("id"), 10, 32)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid config ID"})
-		return
-	}
-
-	if h.db == nil {
-		// 使用内存存储
-		backupConfigMemStorage.mutex.Lock()
-		_, exists := backupConfigMemStorage.configs[uint(id)]
-		if !exists {
-			backupConfigMemStorage.mutex.Unlock()
-			c.JSON(http.StatusNotFound, gin.H{"error": "Backup config not found"})
-			return
-		}
-		delete(backupConfigMemStorage.configs, uint(id))
-		backupConfigMemStorage.mutex.Unlock()
-		c.JSON(http.StatusOK, gin.H{"message": "Backup config deleted successfully"})
 		return
 	}
 

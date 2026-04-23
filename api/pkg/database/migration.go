@@ -30,6 +30,7 @@ func autoMigrate(db *gorm.DB) error {
 	return db.AutoMigrate(
 		&models.User{},
 		&models.Workspace{},
+		&models.WorkspaceMember{},
 		&models.MySQLDatabase{},
 		&models.PostgreSQLDatabase{},
 		&models.Storage{},
@@ -39,6 +40,8 @@ func autoMigrate(db *gorm.DB) error {
 		&models.Task{},
 		&models.Alert{},
 		&models.SystemSetting{},
+		&models.AuditLog{},
+		&models.TokenBlacklist{},
 	)
 }
 

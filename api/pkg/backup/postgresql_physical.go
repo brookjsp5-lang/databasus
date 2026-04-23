@@ -11,84 +11,136 @@ import (
 	"github.com/databasus-new/api/internal/models"
 )
 
-// PostgreSQLPhysicalBackup PostgreSQL物理备份
 func PostgreSQLPhysicalBackup(ctx context.Context, db models.PostgreSQLDatabase, storagePath string) (string, int64, error) {
-	// 生成备份文件名
 	timestamp := time.Now().Format("20060102150405")
-	backupDir := filepath.Join(storagePath, fmt.Sprintf("postgresql_backup_%s", timestamp))
+	backupFile := filepath.Join(storagePath, fmt.Sprintf("postgresql_backup_%s_%d.tar.gz", timestamp, db.ID))
 
-	// 创建备份目录
+	if err := os.MkdirAll(storagePath, 0755); err != nil {
+		return "", 0, fmt.Errorf("failed to create storage directory: %w", err)
+	}
+
+	cmd := exec.CommandContext(ctx, "pg_basebackup",
+		"-h", db.Host,
+		"-p", fmt.Sprintf("%d", db.Port),
+		"-U", db.User,
+		"-Ft",
+		"-z",
+		"-D", storagePath,
+		"-P",
+		"-v",
+	)
+
+	cmd.Env = append(os.Environ(), fmt.Sprintf("PGPASSWORD=%s", db.Password))
+
+	if db.PasswordFile != "" {
+		cmd.Env = append(cmd.Env, fmt.Sprintf("PGPASSFILE=%s", db.PasswordFile))
+	}
+
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return "", 0, fmt.Errorf("pg_basebackup failed: %w, output: %s", err, string(output))
+	}
+
+	var totalSize int64
+	entries, err := os.ReadDir(storagePath)
+	if err == nil {
+		for _, entry := range entries {
+			info, err := entry.Info()
+			if err == nil {
+				totalSize += info.Size()
+			}
+		}
+	}
+
+	backupDir := filepath.Join(storagePath, fmt.Sprintf("postgresql_backup_%s_%d", timestamp, db.ID))
 	if err := os.MkdirAll(backupDir, 0755); err != nil {
 		return "", 0, fmt.Errorf("failed to create backup directory: %w", err)
 	}
 
-	// 构建pg_basebackup命令
-	cmd := exec.CommandContext(ctx, "pg_basebackup",
-		"--host=", db.Host,
-		"--port=", fmt.Sprintf("%d", db.Port),
-		"--username=", db.User,
-		"--pgpassfile=", "/tmp/pgpass",
-		"--format=tar",
-		"--gzip",
-		"--target=", backupDir,
-	)
-
-	// 设置环境变量
-	cmd.Env = append(os.Environ(),
-		fmt.Sprintf("PGPASSWORD=%s", db.Password),
-	)
-
-	// 执行备份
-	if err := cmd.Run(); err != nil {
-		return "", 0, fmt.Errorf("failed to run pg_basebackup: %w", err)
+	globPattern := filepath.Join(storagePath, "*.tar.gz")
+	matches, _ := filepath.Glob(globPattern)
+	for _, match := range matches {
+		src := match
+		dst := filepath.Join(backupDir, filepath.Base(match))
+		if err := os.Rename(src, dst); err != nil {
+			return "", 0, fmt.Errorf("failed to move backup file: %w", err)
+		}
+		backupFile = dst
+		totalSize, _ = getFileSize(dst)
 	}
 
-	// 计算备份大小
-	var totalSize int64
-	err := filepath.Walk(backupDir, func(path string, info os.FileInfo, err error) error {
-		if err != nil {
-			return err
-		}
-		if !info.IsDir() {
-			totalSize += info.Size()
-		}
-		return nil
-	})
-	if err != nil {
-		return "", 0, fmt.Errorf("failed to calculate backup size: %w", err)
-	}
-
-	return backupDir, totalSize, nil
+	return backupFile, totalSize, nil
 }
 
-// PostgreSQLWALArchive PostgreSQL WAL日志归档
-func PostgreSQLWALArchive(ctx context.Context, db models.PostgreSQLDatabase, storagePath string) error {
-	// 生成归档目录
-	timestamp := time.Now().Format("20060102150405")
-	archiveDir := filepath.Join(storagePath, fmt.Sprintf("postgresql_wal_%s", timestamp))
+func getFileSize(path string) (int64, error) {
+	info, err := os.Stat(path)
+	if err != nil {
+		return 0, err
+	}
+	return info.Size(), nil
+}
 
-	// 创建归档目录
+func PostgreSQLWALArchive(ctx context.Context, db models.PostgreSQLDatabase, storagePath string) error {
+	timestamp := time.Now().Format("20060102150405")
+	archiveDir := filepath.Join(storagePath, fmt.Sprintf("postgresql_wal_%s_%d", timestamp, db.ID))
+
 	if err := os.MkdirAll(archiveDir, 0755); err != nil {
 		return fmt.Errorf("failed to create archive directory: %w", err)
 	}
 
-	// 构建pg_receivewal命令
+	if db.WALPath == "" {
+		db.WALPath = "/var/lib/postgresql/wal_archive"
+	}
+
 	cmd := exec.CommandContext(ctx, "pg_receivewal",
-		"--host=", db.Host,
-		"--port=", fmt.Sprintf("%d", db.Port),
-		"--username=", db.User,
-		"--directory=", archiveDir,
+		"-h", db.Host,
+		"-p", fmt.Sprintf("%d", db.Port),
+		"-U", db.User,
+		"-D", archiveDir,
+		"--compress=gzip",
+		"--slot", fmt.Sprintf("databasus_slot_%d", db.ID),
+		"--no-loop",
 	)
 
-	// 设置环境变量
-	cmd.Env = append(os.Environ(),
-		fmt.Sprintf("PGPASSWORD=%s", db.Password),
-	)
+	cmd.Env = append(os.Environ(), fmt.Sprintf("PGPASSWORD=%s", db.Password))
 
-	// 执行归档
-	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("failed to archive WAL logs: %w", err)
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("pg_receivewal failed: %w, output: %s", err, string(output))
 	}
 
 	return nil
+}
+
+func GetPostgreSQLBackupInfo(backupDir string) (map[string]interface{}, error) {
+	info := make(map[string]interface{})
+
+	entries, err := os.ReadDir(backupDir)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read backup directory: %w", err)
+	}
+
+	var totalSize int64
+
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+		info_entry, _ := entry.Info()
+		totalSize += info_entry.Size()
+
+		filename := entry.Name()
+		if filename == "backup_label" || filename == "backup_label.old" {
+			info["has_backup_label"] = true
+		}
+		if filepath.Ext(filename) == ".gz" {
+			info["compressed"] = true
+		}
+	}
+
+	info["total_size"] = totalSize
+	info["file_count"] = len(entries)
+	info["backup_format"] = "tar-gz"
+
+	return info, nil
 }

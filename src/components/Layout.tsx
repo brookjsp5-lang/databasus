@@ -1,6 +1,6 @@
 import React, { ReactNode, useState } from 'react';
 import { Link, useLocation } from 'react-router-dom';
-import { Menu, X, ChevronDown, LogOut, User, Bell, Settings } from 'lucide-react';
+import { Menu, X, ChevronDown, LogOut, Bell } from 'lucide-react';
 import { Layout as AntLayout } from 'antd';
 import { useAuthStore } from '../store';
 
@@ -11,11 +11,13 @@ interface LayoutProps {
 }
 
 const menuItems = [
-  { key: 'dashboard', icon: '◇', label: '首页', path: '/dashboard' },
-  { key: 'databases', icon: '▣', label: '数据库', path: '/databases' },
-  { key: 'backups', icon: '▤', label: '备份管理', path: '/backups' },
+  { key: 'dashboard', icon: '◇', label: '仪表盘', path: '/dashboard' },
+  { key: 'backup-center', icon: '▣', label: '备份中心', path: '/backup-center' },
   { key: 'restores', icon: '▧', label: 'PITR恢复', path: '/restores' },
-  { key: 'settings', icon: '⚙', label: '设置', path: '/settings' },
+  { key: 'storages', icon: '▥', label: '存储管理', path: '/storages' },
+  { key: 'alerts', icon: '⚠', label: '告警通知', path: '/alerts' },
+  { key: 'audit-logs', icon: '📋', label: '审计日志', path: '/audit-logs' },
+  { key: 'settings', icon: '⚙', label: '系统设置', path: '/settings' },
 ];
 
 export const AppLayout: React.FC<LayoutProps> = ({ children }) => {
@@ -180,46 +182,6 @@ export const AppLayout: React.FC<LayoutProps> = ({ children }) => {
                 minWidth: '180px',
                 animation: 'slide-in-up 0.2s ease-out'
               }}>
-                <Link
-                  to="/settings"
-                  style={{
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: '12px',
-                    padding: '12px 16px',
-                    color: 'var(--color-text)',
-                    textDecoration: 'none',
-                    borderRadius: '8px',
-                    transition: 'background 0.3s ease'
-                  }}
-                  onMouseEnter={(e) => e.currentTarget.style.background = 'rgba(0, 240, 255, 0.1)'}
-                  onMouseLeave={(e) => e.currentTarget.style.background = 'transparent'}
-                >
-                  <User size={16} />
-                  <span>个人资料</span>
-                </Link>
-                <Link
-                  to="/settings"
-                  style={{
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: '12px',
-                    padding: '12px 16px',
-                    color: 'var(--color-text)',
-                    textDecoration: 'none',
-                    borderRadius: '8px',
-                    transition: 'background 0.3s ease'
-                  }}
-                  onMouseEnter={(e) => e.currentTarget.style.background = 'rgba(0, 240, 255, 0.1)'}
-                  onMouseLeave={(e) => e.currentTarget.style.background = 'transparent'}
-                >
-                  <Settings size={16} />
-                  <span>设置</span>
-                </Link>
-                <div style={{
-                  borderTop: '1px solid var(--color-border)',
-                  margin: '8px 0'
-                }} />
                 <button
                   onClick={handleLogout}
                   style={{
@@ -259,10 +221,17 @@ export const AppLayout: React.FC<LayoutProps> = ({ children }) => {
             transition: 'width 0.3s ease',
             position: 'sticky',
             top: '64px',
-            height: 'calc(100vh - 64px)'
+            height: 'calc(100vh - 64px)',
+            background: 'var(--color-bg-sidebar)',
+            borderRight: '1px solid var(--color-border-light)'
           }}
         >
-          <nav style={{ padding: '16px 0' }}>
+          <nav style={{ 
+            padding: '16px 12px 16px 16px',
+            display: 'flex',
+            flexDirection: 'column',
+            gap: '4px'
+          }}>
             {menuItems.map((item, index) => {
               const isActive = currentPath === item.key;
               return (
@@ -271,16 +240,37 @@ export const AppLayout: React.FC<LayoutProps> = ({ children }) => {
                   to={item.path}
                   className={`cyber-menu-item ${isActive ? 'active' : ''}`}
                   style={{
-                    margin: '4px 12px',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '12px',
+                    padding: '12px 16px',
+                    borderRadius: '8px',
+                    textDecoration: 'none',
+                    color: isActive ? 'var(--color-primary)' : 'var(--color-text)',
+                    background: isActive ? 'var(--color-primary-bg)' : 'transparent',
+                    transition: 'all 0.2s ease',
                     animation: sidebarOpen ? `slide-in-right 0.3s ease-out ${index * 0.05}s both` : 'none',
-                    opacity: sidebarOpen ? 1 : 0
+                    opacity: sidebarOpen ? 1 : 0,
+                    fontFamily: 'var(--font-body)',
+                    fontWeight: isActive ? '600' : '500',
+                    fontSize: '14px'
+                  }}
+                  onMouseEnter={(e) => {
+                    if (!isActive) {
+                      e.currentTarget.style.background = 'var(--color-bg-hover)';
+                    }
+                  }}
+                  onMouseLeave={(e) => {
+                    if (!isActive) {
+                      e.currentTarget.style.background = 'transparent';
+                    }
                   }}
                 >
                   <span style={{
                     fontSize: '18px',
                     width: '24px',
                     textAlign: 'center',
-                    color: isActive ? 'var(--color-primary)' : 'inherit'
+                    flexShrink: 0
                   }}>
                     {item.icon}
                   </span>

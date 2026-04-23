@@ -1,7 +1,9 @@
-import React, { useEffect, useState } from 'react';
-import { Table, Button, Space, Tag, Modal, message, Select, DatePicker, Form, Input, Popconfirm } from 'antd';
-import { RotateCcw, RefreshCw, Clock, Play, AlertTriangle, CheckCircle, XCircle, Loader, History } from 'lucide-react';
+import React, { useEffect, useState, useCallback } from 'react';
+import { Table, Button, Tag, Modal, message, Select, DatePicker, Popconfirm, Progress, Alert, Space, Tooltip } from 'antd';
+import { RotateCcw, Clock, Loader, CheckCircle, XCircle, AlertTriangle, RefreshCw, Info, Ban, History } from 'lucide-react';
+import dayjs, { Dayjs } from 'dayjs';
 import { restoreAPI, backupAPI } from '../services/api';
+import { useWebSocket } from '../hooks/useWebSocket';
 
 interface RestoreRecord {
   id: number;
@@ -11,6 +13,8 @@ interface RestoreRecord {
   backup_id: number;
   pitr_time?: string;
   status: string;
+  progress?: number;
+  error_msg?: string;
   created_at: string;
 }
 
@@ -26,15 +30,60 @@ interface Backup {
   created_at: string;
 }
 
+interface ProgressUpdate {
+  restore_id: number;
+  status: string;
+  progress: number;
+  message: string;
+}
+
+interface PITRTimeRange {
+  min_time: string;
+  max_time: string;
+  backup_time: string;
+}
+
 export const Restores: React.FC = () => {
   const [restores, setRestores] = useState<RestoreRecord[]>([]);
   const [backups, setBackups] = useState<Backup[]>([]);
   const [loading, setLoading] = useState(false);
   const [createModalVisible, setCreateModalVisible] = useState(false);
+  const [confirmModalVisible, setConfirmModalVisible] = useState(false);
   const [selectedBackup, setSelectedBackup] = useState<Backup | null>(null);
   const [restoreType, setRestoreType] = useState<'full' | 'pitr'>('full');
-  const [pitrTime, setPitrTime] = useState<Date | null>(null);
-  const [form] = Form.useForm();
+  const [pitrTime, setPitrTime] = useState<Dayjs | null>(null);
+  const [pitrTimeRange, setPitrTimeRange] = useState<PITRTimeRange | null>(null);
+  const [backupBeforeRestore, setBackupBeforeRestore] = useState(true);
+  const [isOriginalInstance, setIsOriginalInstance] = useState(false);
+  const [warningMessage, setWarningMessage] = useState('');
+  const [confirmRestore, setConfirmRestore] = useState(false);
+  const [pendingRestoreData, setPendingRestoreData] = useState<any>(null);
+  const [validatingBackup, setValidatingBackup] = useState(false);
+  const [backupValid, setBackupValid] = useState<boolean | null>(null);
+  const [progressMap, setProgressMap] = useState<Record<number, ProgressUpdate>>({});
+
+  const handleProgressUpdate = useCallback((data: any) => {
+    if (data.type === 'progress_update' && data.payload) {
+      const update = data.payload as ProgressUpdate;
+      if (update.restore_id) {
+        setProgressMap(prev => ({
+          ...prev,
+          [update.restore_id]: update
+        }));
+
+        if (update.status === 'success' || update.status === 'failed') {
+          setTimeout(() => {
+            fetchRestores();
+          }, 1000);
+        }
+      }
+    }
+  }, []);
+
+  useWebSocket({
+    onMessage: handleProgressUpdate,
+    onError: () => {},
+  });
 
   useEffect(() => {
     fetchRestores();
@@ -63,9 +112,93 @@ export const Restores: React.FC = () => {
     }
   };
 
+  const checkRestoreTarget = async (backup: Backup) => {
+    try {
+      const response = await restoreAPI.checkTarget({
+        backup_id: backup.id,
+        database_id: backup.database_id,
+        database_type: backup.database_type
+      });
+      setIsOriginalInstance(response.is_original_instance);
+      setWarningMessage(response.warning_message || '');
+    } catch (error) {
+      console.error('Failed to check restore target:', error);
+    }
+  };
+
+  const fetchPITRTimeRange = async (backupId: number, databaseType: string) => {
+    try {
+      const response = await fetch(`/api/restores/pitr-time-range?backup_id=${backupId}&database_type=${databaseType}`, {
+        headers: {
+          'Authorization': `Bearer ${localStorage.getItem('token')}`
+        }
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+        setPitrTimeRange(data);
+      }
+    } catch (error) {
+      console.error('Failed to fetch PITR time range:', error);
+    }
+  };
+
+  const validateBackup = async (backupId: number, databaseType: string) => {
+    setValidatingBackup(true);
+    setBackupValid(null);
+    try {
+      const response = await fetch(`/api/restores/validate-backup?backup_id=${backupId}&database_type=${databaseType}`, {
+        headers: {
+          'Authorization': `Bearer ${localStorage.getItem('token')}`
+        }
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+        setBackupValid(data.is_valid);
+        if (!data.is_valid) {
+          message.error(`备份验证失败: ${data.error_msg}`);
+        }
+      }
+    } catch (error) {
+      console.error('Failed to validate backup:', error);
+      setBackupValid(false);
+    } finally {
+      setValidatingBackup(false);
+    }
+  };
+
+  const handleSelectBackup = async (value: number, option: any) => {
+    const backup = option as Backup;
+    setSelectedBackup(backup);
+    setBackupValid(null);
+
+    await checkRestoreTarget(backup);
+    await validateBackup(backup.id, backup.database_type);
+
+    if (restoreType === 'pitr') {
+      await fetchPITRTimeRange(backup.id, backup.database_type);
+    }
+  };
+
+  const handleRestoreTypeChange = (value: 'full' | 'pitr') => {
+    setRestoreType(value);
+    if (value === 'pitr' && selectedBackup) {
+      fetchPITRTimeRange(selectedBackup.id, selectedBackup.database_type);
+    } else {
+      setPitrTime(null);
+      setPitrTimeRange(null);
+    }
+  };
+
   const handleCreateRestore = async () => {
     if (!selectedBackup) {
       message.warning('请选择备份');
+      return;
+    }
+
+    if (restoreType === 'pitr' && !pitrTime) {
+      message.warning('请选择PITR恢复时间点');
       return;
     }
 
@@ -75,21 +208,72 @@ export const Restores: React.FC = () => {
         database_id: selectedBackup.database_id,
         database_type: selectedBackup.database_type,
         backup_id: selectedBackup.id,
+        backup_before_restore: backupBeforeRestore,
       };
 
       if (restoreType === 'pitr' && pitrTime) {
         restoreData.pitr_time = pitrTime.toISOString();
       }
 
+      if (isOriginalInstance) {
+        setPendingRestoreData(restoreData);
+        setConfirmModalVisible(true);
+        return;
+      }
+
+      await executeRestore(restoreData);
+    } catch (error: any) {
+      if (error?.requires_confirmation) {
+        setPendingRestoreData(error);
+        setConfirmModalVisible(true);
+      } else {
+        message.error('创建恢复任务失败');
+      }
+    }
+  };
+
+  const executeRestore = async (restoreData: any) => {
+    try {
       await restoreAPI.create(restoreData);
-      message.success('恢复任务已创建');
+      message.success('恢复任务已创建，正在执行...');
       setCreateModalVisible(false);
+      setConfirmModalVisible(false);
       setSelectedBackup(null);
       setPitrTime(null);
+      setConfirmRestore(false);
+      setPendingRestoreData(null);
+      setIsOriginalInstance(false);
+      setWarningMessage('');
+      fetchRestores();
+    } catch (error: any) {
+      if (error?.requires_confirmation) {
+        setPendingRestoreData(restoreData);
+        setConfirmModalVisible(true);
+      } else {
+        message.error('创建恢复任务失败');
+      }
+    }
+  };
+
+  const handleConfirmRestore = async () => {
+    if (pendingRestoreData) {
+      pendingRestoreData.confirm_restore = true;
+      await executeRestore(pendingRestoreData);
+    }
+  };
+
+  const handleCancelRestore = async (id: number) => {
+    try {
+      await fetch(`/api/restores/${id}/cancel`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${localStorage.getItem('token')}`
+        }
+      });
+      message.success('恢复任务已取消');
       fetchRestores();
     } catch (error) {
-      console.error('Failed to create restore:', error);
-      message.error('创建恢复任务失败');
+      message.error('取消恢复任务失败');
     }
   };
 
@@ -98,9 +282,10 @@ export const Restores: React.FC = () => {
       pending: { color: 'var(--color-warning)', icon: Clock, text: '等待中' },
       running: { color: 'var(--color-primary)', icon: Loader, text: '执行中' },
       success: { color: 'var(--color-success)', icon: CheckCircle, text: '成功' },
-      failed: { color: 'var(--color-error)', icon: XCircle, text: '失败' }
+      failed: { color: 'var(--color-danger)', icon: XCircle, text: '失败' },
+      cancelled: { color: 'var(--color-text-tertiary)', icon: Ban, text: '已取消' }
     };
-    return configMap[status] || { color: 'var(--color-text-muted)', icon: Clock, text: status };
+    return configMap[status] || { color: 'var(--color-text-tertiary)', icon: Clock, text: status };
   };
 
   const columns = [
@@ -110,11 +295,7 @@ export const Restores: React.FC = () => {
       key: 'id',
       width: 80,
       render: (id: number) => (
-        <span style={{
-          fontFamily: 'var(--font-display)',
-          fontSize: '13px',
-          color: 'var(--color-primary)'
-        }}>
+        <span className="font-mono text-sm" style={{ color: 'var(--color-primary)' }}>
           #{id}
         </span>
       )
@@ -123,9 +304,9 @@ export const Restores: React.FC = () => {
       title: '数据库',
       dataIndex: 'database_id',
       key: 'database_id',
-      width: 120,
-      render: (_: any, record: RestoreRecord) => (
-        <span style={{ fontWeight: 500 }}>DB-{record.database_id}</span>
+      width: 150,
+      render: (id: number) => (
+        <span className="font-medium">DB-{id}</span>
       )
     },
     {
@@ -134,449 +315,323 @@ export const Restores: React.FC = () => {
       key: 'database_type',
       width: 120,
       render: (type: string) => (
-        <Tag style={{
-          background: type === 'mysql' ? 'rgba(59, 89, 152, 0.15)' : 'rgba(51, 103, 145, 0.15)',
-          border: `1px solid ${type === 'mysql' ? 'rgba(59, 89, 152, 0.4)' : 'rgba(51, 103, 145, 0.4)'}`,
-          color: type === 'mysql' ? '#3b5998' : '#336791',
-          fontFamily: 'var(--font-display)',
-          fontSize: '11px',
-          letterSpacing: '0.5px'
-        }}>
+        <Tag color={type === 'mysql' ? 'blue' : 'green'}>
           {type === 'mysql' ? 'MySQL' : 'PostgreSQL'}
         </Tag>
       )
     },
     {
       title: '恢复类型',
-      dataIndex: 'pitr_time',
-      key: 'pitr_time',
+      key: 'restore_type',
       width: 140,
-      render: (pitrTime: string) => (
-        <span style={{
-          display: 'inline-flex',
-          alignItems: 'center',
-          gap: '6px',
-          color: pitrTime ? 'var(--color-accent)' : 'var(--color-secondary)',
-          fontSize: '13px'
-        }}>
-          {pitrTime ? (
-            <>
-              <Clock size={14} />
-              时间点恢复
-            </>
-          ) : (
-            <>
-              <History size={14} />
-              全量恢复
-            </>
-          )}
-        </span>
-      )
-    },
-    {
-      title: 'PITR时间',
-      dataIndex: 'pitr_time',
-      key: 'pitr_time',
-      width: 180,
-      render: (time: string) => (
-        <span style={{
-          fontSize: '13px',
-          color: time ? 'var(--color-accent)' : 'var(--color-text-muted)',
-          fontFamily: time ? 'var(--font-display)' : 'inherit'
-        }}>
-          {time ? new Date(time).toLocaleString() : '-'}
-        </span>
+      render: (_: any, record: RestoreRecord) => (
+        <Tag color={record.pitr_time ? 'purple' : 'cyan'}>
+          {record.pitr_time ? '时间点恢复' : '全量恢复'}
+        </Tag>
       )
     },
     {
       title: '状态',
       dataIndex: 'status',
       key: 'status',
-      width: 120,
-      render: (status: string) => {
+      width: 180,
+      render: (status: string, record: RestoreRecord) => {
         const config = getStatusConfig(status);
+        const progress = progressMap[record.id]?.progress || record.progress || 0;
+        const progressMsg = progressMap[record.id]?.message;
+
         return (
-          <span style={{
-            display: 'inline-flex',
-            alignItems: 'center',
-            gap: '6px',
-            color: config.color,
-            fontSize: '13px'
-          }}>
-            <config.icon
-              size={14}
-              style={{
-                animation: status === 'running' ? 'spin 1s linear infinite' : 'none'
-              }}
-            />
-            {config.text}
-          </span>
+          <div className="flex flex-col gap-1">
+            <div className="status-indicator">
+              <config.icon
+                size={14}
+                style={{
+                  color: config.color,
+                  animation: status === 'running' ? 'spin 1s linear infinite' : 'none'
+                }}
+              />
+              <span className="text-sm" style={{ color: config.color, fontWeight: 500 }}>
+                {config.text}
+              </span>
+            </div>
+            {status === 'running' && progress > 0 && (
+              <Progress
+                percent={Math.round(progress)}
+                size="small"
+                strokeColor="var(--color-primary)"
+                trailColor="var(--color-bg-hover)"
+                format={(p) => `${p}%`}
+              />
+            )}
+            {progressMsg && status === 'running' && (
+              <span className="text-xs text-secondary">{progressMsg}</span>
+            )}
+          </div>
         );
       }
     },
     {
-      title: '创建时间',
+      title: '时间',
       dataIndex: 'created_at',
       key: 'created_at',
       width: 180,
       render: (time: string) => (
-        <span style={{
-          fontSize: '13px',
-          color: 'var(--color-text-muted)'
-        }}>
+        <span className="text-sm text-secondary">
           {new Date(time).toLocaleString()}
         </span>
+      )
+    },
+    {
+      title: '操作',
+      key: 'action',
+      width: 120,
+      render: (_: any, record: RestoreRecord) => (
+        <Space>
+          {(record.status === 'pending' || record.status === 'running') && (
+            <Tooltip title="取消恢复">
+              <Button
+                type="text"
+                icon={<Ban size={14} />}
+                onClick={() => handleCancelRestore(record.id)}
+                danger
+              />
+            </Tooltip>
+          )}
+        </Space>
       )
     },
   ];
 
   return (
-    <div className="animate-fade-in">
-      <div style={{ marginBottom: '32px' }}>
-        <h1 style={{
-          fontFamily: 'var(--font-display)',
-          fontSize: '28px',
-          fontWeight: '700',
-          color: 'var(--color-text)',
-          marginBottom: '8px',
-          letterSpacing: '2px'
-        }}>
-          PITR 恢复
-        </h1>
-        <p style={{ color: 'var(--color-text-muted)', fontSize: '14px' }}>
-          数据库时间点恢复，支持恢复到任意指定时刻
-        </p>
+    <div className="page-container animate-fade-in">
+      <div className="page-header flex justify-between items-center">
+        <div>
+          <h1 className="page-title">恢复管理</h1>
+          <p className="page-description">恢复数据库到指定时间点或全量恢复</p>
+        </div>
+        <Space>
+          <Button
+            icon={<RefreshCw size={16} />}
+            onClick={fetchRestores}
+          >
+            刷新
+          </Button>
+          <Button
+            type="primary"
+            icon={<RotateCcw size={16} />}
+            onClick={() => setCreateModalVisible(true)}
+          >
+            创建恢复任务
+          </Button>
+        </Space>
       </div>
 
-      <div className="cyber-card" style={{ padding: '0' }}>
-        <div style={{
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'space-between',
-          padding: '20px 24px',
-          borderBottom: '1px solid var(--color-border)'
-        }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-            <RotateCcw size={20} style={{ color: 'var(--color-accent)' }} />
-            <span style={{
-              fontFamily: 'var(--font-display)',
-              fontSize: '14px',
-              fontWeight: '600',
-              letterSpacing: '1px'
-            }}>
-              恢复记录
-            </span>
-            <span style={{
-              background: 'rgba(255, 0, 110, 0.1)',
-              padding: '4px 10px',
-              borderRadius: '12px',
-              fontSize: '12px',
-              color: 'var(--color-accent)'
-            }}>
-              {restores.length} 条记录
-            </span>
-          </div>
-
-          <Space size={12}>
-            <button
-              className="cyber-button"
-              onClick={fetchRestores}
-              style={{ display: 'flex', alignItems: 'center', gap: '6px' }}
-            >
-              <RefreshCw size={14} />
-              刷新
-            </button>
-            <button
-              className="cyber-button"
-              onClick={() => setCreateModalVisible(true)}
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: '6px',
-                borderColor: 'var(--color-accent)',
-                color: 'var(--color-accent)'
-              }}
-            >
-              <RotateCcw size={14} />
-              创建恢复任务
-            </button>
-          </Space>
-        </div>
-
+      <div className="card">
         <Table
           columns={columns}
           dataSource={restores}
           rowKey="id"
           loading={loading}
-          pagination={{
-            pageSize: 10,
-            showSizeChanger: true,
-            showTotal: (total) => (
-              <span style={{ color: 'var(--color-text-muted)', fontSize: '13px' }}>
-                共 {total} 条记录
-              </span>
-            )
-          }}
-          style={{ background: 'transparent' }}
+          pagination={{ pageSize: 10 }}
         />
       </div>
 
       <Modal
+        title="创建恢复任务"
         open={createModalVisible}
         onCancel={() => {
           setCreateModalVisible(false);
           setSelectedBackup(null);
-          setRestoreType('full');
           setPitrTime(null);
+          setPitrTimeRange(null);
+          setIsOriginalInstance(false);
+          setWarningMessage('');
+          setBackupValid(null);
         }}
-        footer={null}
-        closable={false}
-        width={600}
+        footer={[
+          <Button key="cancel" onClick={() => setCreateModalVisible(false)}>
+            取消
+          </Button>,
+          <Button
+            key="create"
+            type="primary"
+            onClick={handleCreateRestore}
+            disabled={!selectedBackup || (restoreType === 'pitr' && !pitrTime)}
+          >
+            创建恢复任务
+          </Button>
+        ]}
+        width={650}
       >
-        <div className="cyber-modal">
-          <div style={{
-            display: 'flex',
-            alignItems: 'center',
-            gap: '12px',
-            marginBottom: '24px'
-          }}>
-            <RotateCcw size={24} style={{ color: 'var(--color-accent)' }} />
-            <h3 style={{
-              fontFamily: 'var(--font-display)',
-              fontSize: '18px',
-              fontWeight: '600',
-              margin: 0,
-              letterSpacing: '1px'
-            }}>
-              创建恢复任务
-            </h3>
-          </div>
+        <div className="mb-6">
+          <label className="form-label">选择备份</label>
+          <Select
+            placeholder="请选择要恢复的备份"
+            className="w-full"
+            value={selectedBackup?.id}
+            onChange={handleSelectBackup}
+            options={backups.map(backup => ({
+              label: `备份 #${backup.id} - ${backup.database_type} - ${new Date(backup.created_at).toLocaleString()} - ${(backup.file_size / 1024 / 1024).toFixed(2)} MB`,
+              value: backup.id,
+              ...backup
+            }))}
+          />
+          {validatingBackup && (
+            <div className="mt-2 text-sm text-secondary">
+              正在验证备份文件...
+            </div>
+          )}
+          {backupValid === true && (
+            <div className="mt-2 text-sm text-success flex items-center gap-1">
+              <CheckCircle size={14} /> 备份文件验证通过
+            </div>
+          )}
+          {backupValid === false && (
+            <div className="mt-2 text-sm text-danger flex items-center gap-1">
+              <XCircle size={14} /> 备份文件验证失败
+            </div>
+          )}
+        </div>
 
-          <div style={{
-            background: 'rgba(255, 0, 110, 0.05)',
-            border: '1px solid rgba(255, 0, 110, 0.2)',
-            borderRadius: '8px',
-            padding: '12px 16px',
-            marginBottom: '20px',
-            display: 'flex',
-            alignItems: 'flex-start',
-            gap: '12px'
-          }}>
-            <AlertTriangle size={18} style={{ color: 'var(--color-accent)', marginTop: '2px' }} />
+        {isOriginalInstance && warningMessage && (
+          <Alert
+            type="warning"
+            message="危险操作警告"
+            description={warningMessage}
+            icon={<AlertTriangle size={20} />}
+            showIcon
+            className="mb-4"
+          />
+        )}
+
+        <div className="mb-6">
+          <label className="form-label">恢复类型</label>
+          <Select
+            className="w-full"
+            value={restoreType}
+            onChange={handleRestoreTypeChange}
+            options={[
+              { label: '全量恢复', value: 'full' },
+              { label: '时间点恢复 (PITR)', value: 'pitr' }
+            ]}
+          />
+        </div>
+
+        {restoreType === 'pitr' && (
+          <div className="mb-6">
+            <label className="form-label">选择时间点</label>
+            <div className="flex items-center gap-2 mb-2">
+              <History size={14} className="text-secondary" />
+              <span className="text-xs text-secondary">
+                可恢复时间范围: {pitrTimeRange ? (
+                  `${new Date(pitrTimeRange.backup_time).toLocaleString()} 至 ${new Date(pitrTimeRange.max_time).toLocaleString()}`
+                ) : '加载中...'}
+              </span>
+            </div>
+            <DatePicker
+              showTime
+              className="w-full"
+              value={pitrTime}
+              onChange={(date) => setPitrTime(date)}
+              placeholder="选择恢复时间点"
+              disabledDate={(current) => {
+                if (!pitrTimeRange) return false;
+                const min = dayjs(pitrTimeRange.backup_time);
+                const max = dayjs(pitrTimeRange.max_time);
+                return current.isBefore(min) || current.isAfter(max);
+              }}
+            />
+            <div className="mt-2 flex items-center gap-2 text-xs text-info">
+              <Info size={12} />
+              <span>时间点恢复将应用备份时间点之后的所有WAL/BinLog日志</span>
+            </div>
+          </div>
+        )}
+
+        <div className="mb-4">
+          <label className="flex items-center gap-2 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={backupBeforeRestore}
+              onChange={(e) => setBackupBeforeRestore(e.target.checked)}
+              className="w-4 h-4"
+            />
+            <span className="text-sm">恢复前先备份当前数据（推荐）</span>
+          </label>
+        </div>
+
+        <div className="bg-danger bg-opacity-10 p-4 rounded-lg border border-danger border-opacity-20">
+          <div className="flex items-start gap-3">
+            <AlertTriangle size={20} className="text-danger flex-shrink-0 mt-0.5" />
             <div>
-              <p style={{
-                margin: 0,
-                fontSize: '13px',
-                color: 'var(--color-text)',
-                lineHeight: '1.5'
-              }}>
-                恢复操作将覆盖当前数据库数据，请确保已备份重要数据。PITR恢复可精确到指定时间点。
+              <p className="text-sm font-semibold text-danger mb-1">风险提示</p>
+              <p className="text-sm text-secondary">
+                恢复操作将覆盖当前数据库内容，此操作不可逆。请谨慎操作。
               </p>
             </div>
           </div>
-
-          <div style={{ marginBottom: '20px' }}>
-            <label style={{
-              display: 'block',
-              marginBottom: '8px',
-              fontSize: '13px',
-              color: 'var(--color-text-muted)',
-              textTransform: 'uppercase',
-              letterSpacing: '0.5px'
-            }}>
-              选择备份
-            </label>
-            <Select
-              style={{ width: '100%' }}
-              placeholder="请选择备份"
-              value={selectedBackup?.id}
-              onChange={(value) => {
-                const backup = backups.find(b => b.id === value);
-                setSelectedBackup(backup || null);
-              }}
-            >
-              {backups.map(backup => (
-                <Select.Option key={backup.id} value={backup.id}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                    <span style={{
-                      width: '8px',
-                      height: '8px',
-                      borderRadius: '50%',
-                      background: backup.database_type === 'mysql' ? '#3b5998' : '#336791'
-                    }} />
-                    备份 #{backup.id} - {backup.database_type === 'mysql' ? 'MySQL' : 'PostgreSQL'} -
-                    {new Date(backup.backup_time).toLocaleString()}
-                  </div>
-                </Select.Option>
-              ))}
-            </Select>
-          </div>
-
-          {selectedBackup && (
-            <div style={{ marginBottom: '20px' }}>
-              <label style={{
-                display: 'block',
-                marginBottom: '8px',
-                fontSize: '13px',
-                color: 'var(--color-text-muted)',
-                textTransform: 'uppercase',
-                letterSpacing: '0.5px'
-              }}>
-                恢复类型
-              </label>
-              <div style={{ display: 'flex', gap: '12px' }}>
-                <button
-                  onClick={() => {
-                    setRestoreType('full');
-                    setPitrTime(null);
-                  }}
-                  style={{
-                    flex: 1,
-                    padding: '16px',
-                    background: restoreType === 'full' ? 'rgba(0, 255, 136, 0.1)' : 'rgba(0, 240, 255, 0.02)',
-                    border: `1px solid ${restoreType === 'full' ? 'var(--color-success)' : 'var(--color-border)'}`,
-                    borderRadius: '12px',
-                    cursor: 'pointer',
-                    transition: 'all 0.3s ease',
-                    textAlign: 'left'
-                  }}
-                >
-                  <div style={{
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: '10px',
-                    marginBottom: '8px'
-                  }}>
-                    <History size={18} style={{ color: restoreType === 'full' ? 'var(--color-success)' : 'var(--color-text-muted)' }} />
-                    <span style={{
-                      fontFamily: 'var(--font-display)',
-                      fontSize: '14px',
-                      fontWeight: '600',
-                      color: restoreType === 'full' ? 'var(--color-success)' : 'var(--color-text)'
-                    }}>
-                      全量恢复
-                    </span>
-                  </div>
-                  <p style={{
-                    margin: 0,
-                    fontSize: '12px',
-                    color: 'var(--color-text-muted)',
-                    lineHeight: '1.4'
-                  }}>
-                    恢复到备份创建时的状态
-                  </p>
-                </button>
-
-                <button
-                  onClick={() => setRestoreType('pitr')}
-                  style={{
-                    flex: 1,
-                    padding: '16px',
-                    background: restoreType === 'pitr' ? 'rgba(255, 0, 110, 0.1)' : 'rgba(0, 240, 255, 0.02)',
-                    border: `1px solid ${restoreType === 'pitr' ? 'var(--color-accent)' : 'var(--color-border)'}`,
-                    borderRadius: '12px',
-                    cursor: 'pointer',
-                    transition: 'all 0.3s ease',
-                    textAlign: 'left'
-                  }}
-                >
-                  <div style={{
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: '10px',
-                    marginBottom: '8px'
-                  }}>
-                    <Clock size={18} style={{ color: restoreType === 'pitr' ? 'var(--color-accent)' : 'var(--color-text-muted)' }} />
-                    <span style={{
-                      fontFamily: 'var(--font-display)',
-                      fontSize: '14px',
-                      fontWeight: '600',
-                      color: restoreType === 'pitr' ? 'var(--color-accent)' : 'var(--color-text)'
-                    }}>
-                      时间点恢复
-                    </span>
-                  </div>
-                  <p style={{
-                    margin: 0,
-                    fontSize: '12px',
-                    color: 'var(--color-text-muted)',
-                    lineHeight: '1.4'
-                  }}>
-                    恢复到指定的任意时间点
-                  </p>
-                </button>
-              </div>
-            </div>
-          )}
-
-          {selectedBackup && restoreType === 'pitr' && (
-            <div style={{ marginBottom: '20px' }}>
-              <label style={{
-                display: 'block',
-                marginBottom: '8px',
-                fontSize: '13px',
-                color: 'var(--color-text-muted)',
-                textTransform: 'uppercase',
-                letterSpacing: '0.5px'
-              }}>
-                选择恢复时间点
-              </label>
-              <DatePicker
-                style={{ width: '100%' }}
-                showTime
-                value={pitrTime}
-                onChange={setPitrTime}
-                placeholder="选择目标恢复时间"
-                disabledDate={(current) => {
-                  if (!selectedBackup.backup_time) return false;
-                  const backupTime = new Date(selectedBackup.backup_time);
-                  const now = new Date();
-                  return current.toDate().getTime() > now.getTime() || current.toDate().getTime() < backupTime.getTime();
-                }}
-              />
-              <div style={{
-                marginTop: '8px',
-                fontSize: '12px',
-                color: 'var(--color-text-muted)',
-                display: 'flex',
-                alignItems: 'center',
-                gap: '6px'
-              }}>
-                <Clock size={12} />
-                备份时间: {selectedBackup.backup_time ? new Date(selectedBackup.backup_time).toLocaleString() : '-'}
-              </div>
-            </div>
-          )}
-
-          <div style={{ display: 'flex', gap: '12px', marginTop: '24px' }}>
-            <button
-              className="cyber-button"
-              onClick={() => {
-                setCreateModalVisible(false);
-                setSelectedBackup(null);
-                setRestoreType('full');
-                setPitrTime(null);
-              }}
-              style={{ flex: 1 }}
-            >
-              取消
-            </button>
-            <button
-              className="cyber-button"
-              onClick={handleCreateRestore}
-              disabled={!selectedBackup || (restoreType === 'pitr' && !pitrTime)}
-              style={{
-                flex: 1,
-                borderColor: 'var(--color-accent)',
-                color: 'var(--color-accent)'
-              }}
-            >
-              <Play size={14} style={{ marginRight: '6px' }} />
-              创建恢复任务
-            </button>
-          </div>
         </div>
       </Modal>
+
+      <Modal
+        title="确认恢复操作"
+        open={confirmModalVisible}
+        onCancel={() => {
+          setConfirmModalVisible(false);
+          setConfirmRestore(false);
+          setPendingRestoreData(null);
+        }}
+        onOk={handleConfirmRestore}
+        okText="确认恢复"
+        cancelText="取消"
+        okButtonProps={{ danger: true, disabled: !confirmRestore }}
+        width={500}
+      >
+        <Alert
+          type="error"
+          message="警告：恢复到原始数据库"
+          description={
+            <div className="mt-2">
+              <p className="mb-2">您正在执行恢复到原始数据库实例的操作。</p>
+              <p className="font-semibold">当前数据库的数据将被备份覆盖，此操作不可逆！</p>
+            </div>
+          }
+          showIcon
+          className="mb-4"
+        />
+
+        <div className="bg-warning bg-opacity-10 p-4 rounded-lg border border-warning border-opacity-20 mb-4">
+          <div className="flex items-start gap-3">
+            <Info size={20} className="text-warning flex-shrink-0 mt-0.5" />
+            <div>
+              <p className="text-sm font-semibold text-warning mb-1">建议</p>
+              <p className="text-sm text-secondary">
+                勾选"恢复前先备份当前数据"选项，系统会在恢复前自动创建当前数据的备份。
+              </p>
+            </div>
+          </div>
+        </div>
+
+        <div className="flex items-center gap-2">
+          <input
+            type="checkbox"
+            checked={confirmRestore}
+            onChange={(e) => setConfirmRestore(e.target.checked)}
+            className="w-4 h-4"
+            id="confirmRestore"
+          />
+          <label htmlFor="confirmRestore" className="text-sm cursor-pointer">
+            我已了解恢复操作的风险，确认要继续执行恢复
+          </label>
+        </div>
+      </Modal>
+
+      <style>{`
+        @keyframes spin {
+          from { transform: rotate(0deg); }
+          to { transform: rotate(360deg); }
+        }
+      `}</style>
     </div>
   );
 };

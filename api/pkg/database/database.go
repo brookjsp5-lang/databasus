@@ -3,6 +3,7 @@ package database
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/databasus-new/api/internal/config"
 	"github.com/redis/go-redis/v9"
@@ -10,7 +11,6 @@ import (
 	"gorm.io/gorm"
 )
 
-// InitPostgres 初始化PostgreSQL数据库连接
 func InitPostgres(cfg config.DatabaseConfig) (*gorm.DB, error) {
 	dsn := fmt.Sprintf(
 		"host=%s port=%s user=%s password=%s dbname=%s sslmode=%s",
@@ -22,10 +22,22 @@ func InitPostgres(cfg config.DatabaseConfig) (*gorm.DB, error) {
 		return nil, err
 	}
 
+	sqlDB, err := db.DB()
+	if err != nil {
+		return nil, err
+	}
+
+	sqlDB.SetMaxOpenConns(cfg.MaxOpenConns)
+	sqlDB.SetMaxIdleConns(cfg.MaxIdleConns)
+	sqlDB.SetConnMaxLifetime(time.Duration(cfg.ConnMaxLifetimeMinutes) * time.Minute)
+
+	if err := sqlDB.Ping(); err != nil {
+		return nil, err
+	}
+
 	return db, nil
 }
 
-// InitRedis 初始化Redis连接
 func InitRedis(cfg config.RedisConfig) (*redis.Client, error) {
 	client := redis.NewClient(&redis.Options{
 		Addr:     cfg.Addr,
@@ -33,7 +45,6 @@ func InitRedis(cfg config.RedisConfig) (*redis.Client, error) {
 		DB:       cfg.DB,
 	})
 
-	// 测试连接
 	ctx := context.Background()
 	if _, err := client.Ping(ctx).Result(); err != nil {
 		return nil, err

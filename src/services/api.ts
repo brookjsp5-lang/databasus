@@ -91,7 +91,58 @@ export const authAPI = {
     api.post('/api/auth/register', data),
   login: (data: { email: string; password: string }): Promise<AuthResponse> =>
     api.post('/api/auth/login', data),
+  logout: (): Promise<{ message: string }> => api.post('/api/auth/logout'),
   refresh: (): Promise<{ message: string; token: string }> => api.post('/api/auth/refresh'),
+  changePassword: (data: { current_password: string; new_password: string }): Promise<{ message: string }> =>
+    api.post('/api/auth/change-password', data),
+  updateProfile: (data: { username?: string; email?: string }): Promise<{ message: string; user: User }> =>
+    api.put('/api/auth/profile', data),
+};
+
+// 统计数据
+export interface DashboardStats {
+  total_databases: number;
+  total_backups: number;
+  success_rate: number;
+  storage_used: number;
+  storage_total: number;
+  active_backups: number;
+  failed_backups: number;
+  pending_backups: number;
+  recent_backups_count: number;
+  total_restores: number;
+  success_restores: number;
+  failed_restores: number;
+}
+
+export const statsAPI = {
+  getDashboardStats: (workspaceId: number): Promise<DashboardStats> => 
+    api.get('/api/stats', { params: { workspace_id: workspaceId } }),
+};
+
+// 审计日志
+export interface AuditLog {
+  id: number;
+  user_id: number;
+  username: string;
+  action: string;
+  resource: string;
+  details: string;
+  ip_address: string;
+  created_at: string;
+}
+
+export const auditLogAPI = {
+  getAuditLogs: (params?: {
+    user_id?: number;
+    action?: string;
+    resource?: string;
+    start_date?: string;
+    end_date?: string;
+    page?: number;
+    page_size?: number;
+  }): Promise<{ logs: AuditLog[]; total: number }> => 
+    api.get('/api/audit-logs', { params }),
 };
 
 // 工作空间相关
@@ -144,6 +195,21 @@ export const restoreAPI = {
   create: (data: any): Promise<{ restore: any }> => api.post('/api/restores', data),
   getById: (id: number): Promise<{ restore: any }> => api.get(`/api/restores/${id}`),
   delete: (id: number): Promise<{ message: string }> => api.delete(`/api/restores/${id}`),
+  checkTarget: (data: { backup_id: number; database_id: number; database_type: string }): Promise<{
+    is_original_instance: boolean;
+    warning_message: string;
+    requires_confirmation: boolean;
+  }> => api.post('/api/restores/check-target', data),
+};
+
+// WAL备份相关
+export const walBackupAPI = {
+  getStatus: (databaseId: number, databaseType: string): Promise<{ status: any }> =>
+    api.get('/api/wal-backup/status', { params: { database_id: databaseId, database_type: databaseType } }),
+  start: (data: { database_id: number; database_type: string }): Promise<{ message: string }> =>
+    api.post('/api/wal-backup/start', data),
+  stop: (data: { database_id: number; database_type: string }): Promise<{ message: string }> =>
+    api.post('/api/wal-backup/stop', data),
 };
 
 // 备份配置相关

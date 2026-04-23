@@ -1,63 +1,50 @@
 package handlers
 
 import (
+	"encoding/json"
 	"net/http"
-	"strconv"
-	"sync"
 
 	"github.com/databasus-new/api/internal/models"
+	"github.com/databasus-new/api/pkg/auth"
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
 )
 
-// 内存存储工作空间信息
-type memoryWorkspaceStorage struct {
-	workspaces map[uint]*models.Workspace
-	mutex      sync.RWMutex
-	nextID     uint
-}
-
-var (
-	workspaceMemStorage = &memoryWorkspaceStorage{
-		workspaces: make(map[uint]*models.Workspace),
-		nextID:     1,
-	}
-)
-
-// WorkspaceHandler 工作空间处理器
 type WorkspaceHandler struct {
 	db *gorm.DB
 }
 
-// NewWorkspaceHandler 创建工作空间处理器
 func NewWorkspaceHandler(db *gorm.DB) *WorkspaceHandler {
 	return &WorkspaceHandler{db: db}
 }
 
-// CreateWorkspaceRequest 创建工作空间请求
 type CreateWorkspaceRequest struct {
-	Name string `json:"name" binding:"required,min=3,max=100"`
+	Name string `json:"name" binding:"required"`
 }
 
-// UpdateWorkspaceRequest 更新工作空间请求
 type UpdateWorkspaceRequest struct {
-	Name string `json:"name" binding:"required,min=3,max=100"`
+	Name string `json:"name" binding:"required"`
 }
 
-// GetAll 获取所有工作空间
-func (h *WorkspaceHandler) GetAll(c *gin.Context) {
-	if h.db == nil {
-		// 使用内存存储
-		workspaceMemStorage.mutex.RLock()
-		var workspaces []models.Workspace
-		for _, workspace := range workspaceMemStorage.workspaces {
-			workspaces = append(workspaces, *workspace)
-		}
-		workspaceMemStorage.mutex.RUnlock()
-		c.JSON(http.StatusOK, gin.H{"workspaces": workspaces})
-		return
-	}
+type InviteMemberRequest struct {
+	Email string `json:"email" binding:"required,email"`
+	Role  string `json:"role" binding:"required"`
+}
 
+type UpdateMemberRoleRequest struct {
+	Role string `json:"role" binding:"required"`
+}
+
+type WorkspaceMemberWithUser struct {
+	ID          uint   `json:"id"`
+	UserID     uint   `json:"user_id"`
+	WorkspaceID uint   `json:"workspace_id"`
+	Role       string `json:"role"`
+	Username   string `json:"username"`
+	Email      string `json:"email"`
+}
+
+func (h *WorkspaceHandler) GetAll(c *gin.Context) {
 	var workspaces []models.Workspace
 	if err := h.db.Find(&workspaces).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get workspaces"})
@@ -67,57 +54,8 @@ func (h *WorkspaceHandler) GetAll(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"workspaces": workspaces})
 }
 
-// Create 创建工作空间
-func (h *WorkspaceHandler) Create(c *gin.Context) {
-	var req CreateWorkspaceRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-		return
-	}
-
-	workspace := models.Workspace{
-		Name: req.Name,
-	}
-
-	if h.db == nil {
-		// 使用内存存储
-		workspaceMemStorage.mutex.Lock()
-		workspace.ID = workspaceMemStorage.nextID
-		workspaceMemStorage.workspaces[workspace.ID] = &workspace
-		workspaceMemStorage.nextID++
-		workspaceMemStorage.mutex.Unlock()
-		c.JSON(http.StatusCreated, gin.H{"workspace": workspace})
-		return
-	}
-
-	if err := h.db.Create(&workspace).Error; err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create workspace"})
-		return
-	}
-
-	c.JSON(http.StatusCreated, gin.H{"workspace": workspace})
-}
-
-// GetByID 根据ID获取工作空间
 func (h *WorkspaceHandler) GetByID(c *gin.Context) {
-	id, err := strconv.ParseUint(c.Param("id"), 10, 32)
-	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid workspace ID"})
-		return
-	}
-
-	if h.db == nil {
-		// 使用内存存储
-		workspaceMemStorage.mutex.RLock()
-		workspace, exists := workspaceMemStorage.workspaces[uint(id)]
-		workspaceMemStorage.mutex.RUnlock()
-		if !exists {
-			c.JSON(http.StatusNotFound, gin.H{"error": "Workspace not found"})
-			return
-		}
-		c.JSON(http.StatusOK, gin.H{"workspace": workspace})
-		return
-	}
+	id := c.Param("id")
 
 	var workspace models.Workspace
 	if err := h.db.First(&workspace, id).Error; err != nil {
@@ -128,11 +66,50 @@ func (h *WorkspaceHandler) GetByID(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"workspace": workspace})
 }
 
-// Update 更新工作空间
+func (h *WorkspaceHandler) Create(c *gin.Context) {
+	var req CreateWorkspaceRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	userID, _ := c.Get("user_id")
+
+	workspace := models.Workspace{
+		Name: req.Name,
+	}
+
+	if err := h.db.Create(&workspace).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create workspace"})
+		return
+	}
+
+	member := models.WorkspaceMember{
+		UserID:     userID.(uint),
+		WorkspaceID: workspace.ID,
+		Role:       string(auth.RoleOwner),
+	}
+
+	if err := h.db.Create(&member).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create workspace member"})
+		return
+	}
+
+	c.JSON(http.StatusCreated, gin.H{"workspace": workspace})
+}
+
 func (h *WorkspaceHandler) Update(c *gin.Context) {
-	id, err := strconv.ParseUint(c.Param("id"), 10, 32)
-	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid workspace ID"})
+	id := c.Param("id")
+
+	var workspace models.Workspace
+	if err := h.db.First(&workspace, id).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Workspace not found"})
+		return
+	}
+
+	userID, _ := c.Get("user_id")
+	if err := h.checkPermission(workspace.ID, userID.(uint), auth.PermissionUpdateSettings); err != nil {
+		c.JSON(http.StatusForbidden, gin.H{"error": err.Error()})
 		return
 	}
 
@@ -142,29 +119,7 @@ func (h *WorkspaceHandler) Update(c *gin.Context) {
 		return
 	}
 
-	if h.db == nil {
-		// 使用内存存储
-		workspaceMemStorage.mutex.Lock()
-		workspace, exists := workspaceMemStorage.workspaces[uint(id)]
-		if !exists {
-			workspaceMemStorage.mutex.Unlock()
-			c.JSON(http.StatusNotFound, gin.H{"error": "Workspace not found"})
-			return
-		}
-		workspace.Name = req.Name
-		workspaceMemStorage.mutex.Unlock()
-		c.JSON(http.StatusOK, gin.H{"workspace": workspace})
-		return
-	}
-
-	var workspace models.Workspace
-	if err := h.db.First(&workspace, id).Error; err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "Workspace not found"})
-		return
-	}
-
 	workspace.Name = req.Name
-
 	if err := h.db.Save(&workspace).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update workspace"})
 		return
@@ -173,33 +128,261 @@ func (h *WorkspaceHandler) Update(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"workspace": workspace})
 }
 
-// Delete 删除工作空间
 func (h *WorkspaceHandler) Delete(c *gin.Context) {
-	id, err := strconv.ParseUint(c.Param("id"), 10, 32)
-	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid workspace ID"})
+	id := c.Param("id")
+
+	var workspace models.Workspace
+	if err := h.db.First(&workspace, id).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Workspace not found"})
 		return
 	}
 
-	if h.db == nil {
-		// 使用内存存储
-		workspaceMemStorage.mutex.Lock()
-		_, exists := workspaceMemStorage.workspaces[uint(id)]
-		if !exists {
-			workspaceMemStorage.mutex.Unlock()
-			c.JSON(http.StatusNotFound, gin.H{"error": "Workspace not found"})
-			return
-		}
-		delete(workspaceMemStorage.workspaces, uint(id))
-		workspaceMemStorage.mutex.Unlock()
-		c.JSON(http.StatusOK, gin.H{"message": "Workspace deleted successfully"})
+	userID, _ := c.Get("user_id")
+	if err := h.checkPermission(workspace.ID, userID.(uint), auth.PermissionManageRoles); err != nil {
+		c.JSON(http.StatusForbidden, gin.H{"error": "Only owner can delete workspace"})
 		return
 	}
 
-	if err := h.db.Delete(&models.Workspace{}, id).Error; err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to delete workspace"})
+	h.db.Delete(&workspace)
+
+	c.JSON(http.StatusOK, gin.H{"message": "Workspace deleted"})
+}
+
+func (h *WorkspaceHandler) GetMembers(c *gin.Context) {
+	workspaceID := c.Param("id")
+
+	var members []WorkspaceMemberWithUser
+	if err := h.db.Table("workspace_members").
+		Select("workspace_members.*, users.username, users.email").
+		Joins("LEFT JOIN users ON users.id = workspace_members.user_id").
+		Where("workspace_members.workspace_id = ?", workspaceID).
+		Find(&members).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get members"})
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{"message": "Workspace deleted successfully"})
+	c.JSON(http.StatusOK, gin.H{"members": members})
+}
+
+func (h *WorkspaceHandler) InviteMember(c *gin.Context) {
+	workspaceID := c.Param("id")
+
+	var workspace models.Workspace
+	if err := h.db.First(&workspace, workspaceID).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Workspace not found"})
+		return
+	}
+
+	userID, _ := c.Get("user_id")
+	if err := h.checkPermission(workspace.ID, userID.(uint), auth.PermissionInviteUser); err != nil {
+		c.JSON(http.StatusForbidden, gin.H{"error": err.Error()})
+		return
+	}
+
+	var req InviteMemberRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	if !auth.HasPermission(auth.Role(req.Role), auth.PermissionInviteUser) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid role"})
+		return
+	}
+
+	var user models.User
+	if err := h.db.Where("email = ?", req.Email).First(&user).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "User not found with this email"})
+		return
+	}
+
+	var existingMember models.WorkspaceMember
+	if err := h.db.Where("user_id = ? AND workspace_id = ?", user.ID, workspaceID).First(&existingMember).Error; err == nil {
+		c.JSON(http.StatusConflict, gin.H{"error": "User is already a member"})
+		return
+	}
+
+	member := models.WorkspaceMember{
+		UserID:     user.ID,
+		WorkspaceID: workspace.ID,
+		Role:       req.Role,
+	}
+
+	if err := h.db.Create(&member).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to invite member"})
+		return
+	}
+
+	h.logAudit(userID.(uint), "invite_member", "workspace_member", map[string]interface{}{
+		"email": req.Email,
+		"role":  req.Role,
+	})
+
+	c.JSON(http.StatusCreated, gin.H{"member": member})
+}
+
+func (h *WorkspaceHandler) UpdateMemberRole(c *gin.Context) {
+	workspaceID := c.Param("id")
+	memberID := c.Param("memberId")
+
+	var workspace models.Workspace
+	if err := h.db.First(&workspace, workspaceID).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Workspace not found"})
+		return
+	}
+
+	userID, _ := c.Get("user_id")
+	if err := h.checkPermission(workspace.ID, userID.(uint), auth.PermissionManageRoles); err != nil {
+		c.JSON(http.StatusForbidden, gin.H{"error": err.Error()})
+		return
+	}
+
+	var req UpdateMemberRoleRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	var member models.WorkspaceMember
+	if err := h.db.First(&member, memberID).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Member not found"})
+		return
+	}
+
+	if member.WorkspaceID != workspace.ID {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Member not found in workspace"})
+		return
+	}
+
+	var requestorMember models.WorkspaceMember
+	if err := h.db.Where("user_id = ? AND workspace_id = ?", userID, workspace.ID).First(&requestorMember).Error; err != nil {
+		c.JSON(http.StatusForbidden, gin.H{"error": "Your role in this workspace is unknown"})
+		return
+	}
+
+	targetRole := auth.Role(req.Role)
+	requestorRole := auth.Role(requestorMember.Role)
+
+	if !auth.CanManageRole(requestorRole, targetRole) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Cannot assign role higher than your own"})
+		return
+	}
+
+	member.Role = req.Role
+	if err := h.db.Save(&member).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update member role"})
+		return
+	}
+
+	h.logAudit(userID.(uint), "update_member_role", "workspace_member", map[string]interface{}{
+		"member_id": memberID,
+		"new_role":  req.Role,
+	})
+
+	c.JSON(http.StatusOK, gin.H{"member": member})
+}
+
+func (h *WorkspaceHandler) RemoveMember(c *gin.Context) {
+	workspaceID := c.Param("id")
+	memberID := c.Param("memberId")
+
+	var workspace models.Workspace
+	if err := h.db.First(&workspace, workspaceID).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Workspace not found"})
+		return
+	}
+
+	userID, _ := c.Get("user_id")
+	if err := h.checkPermission(workspace.ID, userID.(uint), auth.PermissionRemoveUser); err != nil {
+		c.JSON(http.StatusForbidden, gin.H{"error": err.Error()})
+		return
+	}
+
+	var member models.WorkspaceMember
+	if err := h.db.First(&member, memberID).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Member not found"})
+		return
+	}
+
+	if member.WorkspaceID != workspace.ID {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Member not found in workspace"})
+		return
+	}
+
+	if member.Role == string(auth.RoleOwner) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Cannot remove workspace owner"})
+		return
+	}
+
+	h.db.Delete(&member)
+
+	h.logAudit(userID.(uint), "remove_member", "workspace_member", map[string]interface{}{
+		"member_id": memberID,
+	})
+
+	c.JSON(http.StatusOK, gin.H{"message": "Member removed"})
+}
+
+func (h *WorkspaceHandler) Leave(c *gin.Context) {
+	workspaceID := c.Param("id")
+
+	userID, _ := c.Get("user_id")
+
+	var member models.WorkspaceMember
+	if err := h.db.Where("user_id = ? AND workspace_id = ?", userID, workspaceID).First(&member).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "You are not a member of this workspace"})
+		return
+	}
+
+	if member.Role == string(auth.RoleOwner) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Owner cannot leave workspace. Transfer ownership first."})
+		return
+	}
+
+	h.db.Delete(&member)
+
+	c.JSON(http.StatusOK, gin.H{"message": "You have left the workspace"})
+}
+
+func (h *WorkspaceHandler) GetMyRole(c *gin.Context) {
+	workspaceID := c.Param("id")
+
+	userID, _ := c.Get("user_id")
+
+	var member models.WorkspaceMember
+	if err := h.db.Where("user_id = ? AND workspace_id = ?", userID, workspaceID).First(&member).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "You are not a member of this workspace"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"role":       member.Role,
+		"permissions": auth.GetPermissionsForRole(auth.Role(member.Role)),
+	})
+}
+
+func (h *WorkspaceHandler) checkPermission(workspaceID, userID uint, permission auth.Permission) error {
+	var member models.WorkspaceMember
+	if err := h.db.Where("user_id = ? AND workspace_id = ?", userID, workspaceID).First(&member).Error; err != nil {
+		return auth.NewUnauthorizedError()
+	}
+
+	role := auth.Role(member.Role)
+	if !auth.HasPermission(role, permission) {
+		return auth.NewForbiddenError(string(permission))
+	}
+
+	return nil
+}
+
+func (h *WorkspaceHandler) logAudit(userID uint, action string, resource string, details map[string]interface{}) {
+	detailsJSON, _ := json.Marshal(details)
+	auditLog := models.AuditLog{
+		UserID:    userID,
+		Username:  "",
+		Action:    action,
+		Resource:  resource,
+		Details:   string(detailsJSON),
+	}
+	h.db.Create(&auditLog)
 }

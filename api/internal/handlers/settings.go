@@ -5,22 +5,42 @@ import (
 	"strconv"
 
 	"github.com/databasus-new/api/internal/models"
+	"github.com/databasus-new/api/pkg/notification"
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
 )
 
 type SettingsHandler struct {
-	db *gorm.DB
+	db           *gorm.DB
+	smtpService  *notification.SMTPService
 }
 
 func NewSettingsHandler(db *gorm.DB) *SettingsHandler {
-	return &SettingsHandler{db: db}
+	return &SettingsHandler{
+		db:          db,
+		smtpService: notification.NewSMTPService(db),
+	}
 }
 
 type SystemSettingRequest struct {
 	Key   string `json:"key" binding:"required"`
 	Value string `json:"value" binding:"required"`
 	Type  string `json:"type"`
+}
+
+type SMTPConfigRequest struct {
+	Host        string `json:"host" binding:"required"`
+	Port        int    `json:"port" binding:"required"`
+	Username    string `json:"username" binding:"required"`
+	Password    string `json:"password" binding:"required"`
+	Encryption  string `json:"encryption" binding:"required"`
+	FromAddress string `json:"from_address" binding:"required"`
+	FromName    string `json:"from_name" binding:"required"`
+	IsEnabled   bool   `json:"is_enabled"`
+}
+
+type TestEmailRequest struct {
+	ToAddress string `json:"to_address" binding:"required"`
 }
 
 func (h *SettingsHandler) GetAll(c *gin.Context) {
@@ -203,4 +223,106 @@ func boolToString(b bool) string {
 
 func intToString(i int) string {
 	return strconv.Itoa(i)
+}
+
+func (h *SettingsHandler) GetSMTPConfig(c *gin.Context) {
+	config, err := h.smtpService.GetConfig()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get SMTP config"})
+		return
+	}
+
+	config.Password = ""
+	c.JSON(http.StatusOK, gin.H{"smtp_config": config})
+}
+
+func (h *SettingsHandler) SaveSMTPConfig(c *gin.Context) {
+	var req SMTPConfigRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	if req.Port < 1 || req.Port > 65535 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid port number"})
+		return
+	}
+
+	if req.Encryption != "none" && req.Encryption != "tls" && req.Encryption != "ssl" && req.Encryption != "starttls" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid encryption type. Must be: none, tls, ssl, or starttls"})
+		return
+	}
+
+	config := notification.SMTPConfig{
+		Host:        req.Host,
+		Port:        req.Port,
+		Username:    req.Username,
+		Password:    req.Password,
+		Encryption:  req.Encryption,
+		FromAddress: req.FromAddress,
+		FromName:    req.FromName,
+		IsEnabled:   req.IsEnabled,
+	}
+
+	if err := h.smtpService.SaveConfig(&config); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to save SMTP config"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"message": "SMTP config saved successfully"})
+}
+
+func (h *SettingsHandler) TestSMTPConnection(c *gin.Context) {
+	var req SMTPConfigRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	config := notification.SMTPConfig{
+		Host:        req.Host,
+		Port:        req.Port,
+		Username:    req.Username,
+		Password:    req.Password,
+		Encryption:  req.Encryption,
+		FromAddress: req.FromAddress,
+		FromName:    req.FromName,
+		IsEnabled:   true,
+	}
+
+	if err := h.smtpService.TestConnection(&config); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error(), "success": false})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"message": "SMTP connection test successful", "success": true})
+}
+
+func (h *SettingsHandler) TestEmail(c *gin.Context) {
+	var req TestEmailRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	config, err := h.smtpService.GetConfig()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "SMTP not configured"})
+		return
+	}
+
+	if !config.IsEnabled {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "SMTP is not enabled"})
+		return
+	}
+
+	config.Password = ""
+
+	emailNotifier := notification.NewEmailNotifier(*config)
+	if err := emailNotifier.Test(req.ToAddress); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error(), "success": false})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"message": "Test email sent successfully", "success": true})
 }

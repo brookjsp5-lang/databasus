@@ -1,7 +1,6 @@
 package main
 
 import (
-	"fmt"
 	"log"
 	"net/http"
 	"os"
@@ -9,6 +8,7 @@ import (
 
 	"github.com/databasus-new/api/internal/config"
 	"github.com/databasus-new/api/internal/handlers"
+	"github.com/databasus-new/api/pkg/backup"
 	"github.com/databasus-new/api/pkg/database"
 	"github.com/databasus-new/api/pkg/scheduler"
 	"github.com/gin-gonic/gin"
@@ -22,14 +22,20 @@ func main() {
 
 	cfg := config.Load()
 
+	if cfg.JWT.Secret == "" {
+		log.Fatal("JWT_SECRET environment variable is required")
+	}
+
 	db, err := database.InitPostgres(cfg.Database)
 	if err != nil {
-		log.Printf("Warning: Failed to connect to database: %v", err)
-		log.Println("Server will start without database connection")
+		log.Fatalf("Failed to connect to database: %v", err)
+	}
+	log.Println("Database connected successfully")
+
+	if err := database.RunMigrations(db); err != nil {
+		log.Printf("Warning: Failed to run database migrations: %v", err)
 	} else {
-		if err := database.RunMigrations(db); err != nil {
-			log.Printf("Warning: Failed to run database migrations: %v", err)
-		}
+		log.Println("Database migrations completed successfully")
 	}
 
 	redisClient, err := database.InitRedis(cfg.Redis)
@@ -37,18 +43,21 @@ func main() {
 		log.Println("Warning: Failed to connect to Redis:", err)
 	}
 
-	if db != nil {
-		taskScheduler := scheduler.NewScheduler(db, redisClient, cfg.Backup.StoragePath)
-		taskScheduler.Start(5)
+	taskScheduler := scheduler.NewScheduler(db, redisClient, cfg.Backup.StoragePath)
+	taskScheduler.Start(5)
 
-		cronScheduler := scheduler.NewCronScheduler(db, taskScheduler)
-		cronScheduler.Start()
+	cronScheduler := scheduler.NewCronScheduler(db, taskScheduler)
+	cronScheduler.Start()
 
-		taskScheduler.StartCleanupWorker(24*time.Hour, cfg.Backup.RetentionDays)
+	taskScheduler.StartCleanupWorker(24*time.Hour, cfg.Backup.RetentionDays)
 
-		log.Printf("Task scheduler initialized with storage path: %s, retention days: %d",
-			cfg.Backup.StoragePath, cfg.Backup.RetentionDays)
-	}
+	walService := backup.NewWALBackupService(db, redisClient, cfg.Backup.StoragePath)
+	walService.Start()
+
+	walHandler := handlers.NewWALBackupHandler(walService)
+
+	log.Printf("Task scheduler initialized with storage path: %s, retention days: %d",
+		cfg.Backup.StoragePath, cfg.Backup.RetentionDays)
 
 	router := gin.Default()
 
@@ -70,26 +79,7 @@ func main() {
 		})
 	})
 
-	auth := router.Group("/auth")
-	{
-		auth.POST("/login", handlers.Login)
-	}
-
-	api := router.Group("/api")
-	api.Use(handlers.AuthMiddleware())
-	{
-		api.GET("/workspace/stats", handlers.GetWorkspaceStats)
-		api.GET("/databases", handlers.GetDatabases)
-		api.POST("/databases", handlers.CreateDatabase)
-		api.DELETE("/databases/:id", handlers.DeleteDatabase)
-		api.GET("/backups", handlers.GetBackups)
-		api.POST("/backups", handlers.CreateBackup)
-		api.DELETE("/backups/:id", handlers.DeleteBackup)
-		api.GET("/restores", handlers.GetRestores)
-		api.POST("/restores", handlers.CreateRestore)
-		api.GET("/settings", handlers.GetSettings)
-		api.PUT("/settings", handlers.UpdateSettings)
-	}
+	handlers.SetupRoutes(router, db, redisClient, cfg, walHandler)
 
 	port := os.Getenv("PORT")
 	if port == "" {

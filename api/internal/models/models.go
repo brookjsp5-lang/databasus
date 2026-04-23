@@ -28,6 +28,19 @@ type Workspace struct {
 	Users     []User         `json:"users" gorm:"many2many:workspace_users;"`
 }
 
+// WorkspaceMember 工作空间成员模型
+type WorkspaceMember struct {
+	ID          uint           `json:"id" gorm:"primaryKey"`
+	CreatedAt   time.Time      `json:"created_at"`
+	UpdatedAt   time.Time      `json:"updated_at"`
+	DeletedAt   gorm.DeletedAt `json:"deleted_at" gorm:"index"`
+	UserID      uint           `json:"user_id" gorm:"not null"`
+	WorkspaceID uint           `json:"workspace_id" gorm:"not null"`
+	Role        string         `json:"role" gorm:"not null;default:'viewer'"`
+	User        User           `json:"user,omitempty" gorm:"foreignKey:UserID"`
+	Workspace   Workspace      `json:"workspace,omitempty" gorm:"foreignKey:WorkspaceID"`
+}
+
 // MySQLDatabase MySQL数据库模型
 type MySQLDatabase struct {
 	ID                    uint           `json:"id" gorm:"primaryKey"`
@@ -41,11 +54,18 @@ type MySQLDatabase struct {
 	User                  string         `json:"user" gorm:"not null"`
 	Password              string         `json:"-" gorm:"not null"`
 	DatabaseName          string         `json:"database_name" gorm:"not null"`
+	EngineVersion         string         `json:"engine_version" gorm:"default:'8.0'"` // MySQL: 5.7, 8.0, 8.4, 9.0
 	IsPhysicalBackupSupported bool         `json:"is_physical_backup_supported" gorm:"default:false"`
 	BinaryLogEnabled      bool           `json:"binary_log_enabled" gorm:"default:false"`
 	BinaryLogPath         string         `json:"binary_log_path"`
 	XtraBackupPath        string         `json:"xtrabackup_path"`
+	DataDirectory         string         `json:"data_directory"`
+	InstanceID            string         `json:"instance_id"`
+	CompressionEnabled    bool           `json:"compression_enabled" gorm:"default:false"`
 }
+
+// SupportedMySQLVersions MySQL支持的版本
+var SupportedMySQLVersions = []string{"5.7", "8.0", "8.4", "9.0"}
 
 // PostgreSQLDatabase PostgreSQL数据库模型
 type PostgreSQLDatabase struct {
@@ -60,9 +80,16 @@ type PostgreSQLDatabase struct {
 	User          string         `json:"user" gorm:"not null"`
 	Password      string         `json:"-" gorm:"not null"`
 	DatabaseName  string         `json:"database_name" gorm:"not null"`
+	EngineVersion string         `json:"engine_version" gorm:"default:'16'"` // PostgreSQL: 12, 13, 14, 15, 16, 17, 18
 	WALEnabled    bool           `json:"wal_enabled" gorm:"default:false"`
 	WALPath       string         `json:"wal_path"`
+	DataDirectory string         `json:"data_directory"`
+	PasswordFile  string         `json:"password_file"`
+	InstanceID    string         `json:"instance_id"`
 }
+
+// SupportedPostgreSQLVersions PostgreSQL支持的版本
+var SupportedPostgreSQLVersions = []string{"12", "13", "14", "15", "16", "17", "18"}
 
 // Backup 备份模型
 type Backup struct {
@@ -76,9 +103,19 @@ type Backup struct {
 	BackupType    string         `json:"backup_type" gorm:"not null"` // physical or logical
 	Status        string         `json:"status" gorm:"not null;default:pending"`
 	FileSize      int64          `json:"file_size"`
+	OriginalSize  int64          `json:"original_size"`
+	CompressedSize int64        `json:"compressed_size"`
 	FilePath      string         `json:"file_path"`
 	BackupTime    time.Time      `json:"backup_time"`
+	EncryptionEnabled bool       `json:"encryption_enabled" gorm:"default:false"`
 	EncryptionKey string         `json:"-"`
+	CompressedPath string        `json:"compressed_path"`
+	CompressionRatio float64     `json:"compression_ratio"`
+	ErrorMsg      string         `json:"error_msg,omitempty"`
+	Progress      float64        `json:"progress" gorm:"default:0"`
+	Compressed    bool           `json:"compressed" gorm:"default:true"`
+	CompressedLevel int          `json:"compressed_level" gorm:"default:6"`
+	AgentID       *uint          `json:"agent_id,omitempty"`
 }
 
 // Restore 恢复模型
@@ -94,6 +131,8 @@ type Restore struct {
 	Status        string         `json:"status" gorm:"not null;default:pending"`
 	RestoreTime   time.Time      `json:"restore_time"`
 	PITRTime      *time.Time     `json:"pitr_time"`
+	Progress      float64        `json:"progress" gorm:"default:0"`
+	ErrorMsg      string         `json:"error_msg,omitempty"`
 }
 
 // Storage 存储模型
@@ -110,17 +149,32 @@ type Storage struct {
 
 // BackupConfig 备份配置模型
 type BackupConfig struct {
-	ID            uint           `json:"id" gorm:"primaryKey"`
-	CreatedAt     time.Time      `json:"created_at"`
-	UpdatedAt     time.Time      `json:"updated_at"`
-	DeletedAt     gorm.DeletedAt `json:"deleted_at" gorm:"index"`
-	WorkspaceID   uint           `json:"workspace_id" gorm:"not null"`
-	DatabaseID    uint           `json:"database_id" gorm:"not null"`
-	DatabaseType  string         `json:"database_type" gorm:"not null"`
-	BackupType    string         `json:"backup_type" gorm:"not null"`
-	CronExpression string        `json:"cron_expression" gorm:"not null"`
-	RetentionDays int            `json:"retention_days" gorm:"default:7"`
-	IsEnabled     bool           `json:"is_enabled" gorm:"default:true"`
+	ID              uint           `json:"id" gorm:"primaryKey"`
+	CreatedAt       time.Time      `json:"created_at"`
+	UpdatedAt       time.Time      `json:"updated_at"`
+	DeletedAt       gorm.DeletedAt `json:"deleted_at" gorm:"index"`
+	Name            string         `json:"name" gorm:"not null"`
+	WorkspaceID     uint           `json:"workspace_id" gorm:"not null"`
+	DatabaseID      uint           `json:"database_id" gorm:"not null"`
+	DatabaseType    string         `json:"database_type" gorm:"not null"`
+	StorageID       uint           `json:"storage_id" gorm:"not null"`
+	BackupType      string         `json:"backup_type" gorm:"not null"`
+	ScheduleType    string         `json:"schedule_type" gorm:"default:'daily'"`
+	CronExpression  string         `json:"cron_expression" gorm:"not null"`
+	RetentionType   string         `json:"retention_type" gorm:"default:'time'"`
+	RetentionDays   int            `json:"retention_days" gorm:"default:7"`
+	RetentionCount  int            `json:"retention_count" gorm:"default:0"`
+	Compress        bool           `json:"compress" gorm:"default:true"`
+	CompressLevel   int            `json:"compress_level" gorm:"default:6"`
+	EncryptionEnabled bool         `json:"encryption_enabled" gorm:"default:false"`
+	EncryptionKey   string         `json:"encryption_key,omitempty"`
+	EmailEnabled    bool           `json:"email_enabled" gorm:"default:false"`
+	Email           string         `json:"email,omitempty"`
+	WebhookEnabled  bool           `json:"webhook_enabled" gorm:"default:false"`
+	WebhookURL      string         `json:"webhook_url,omitempty"`
+	NotifyOnSuccess bool           `json:"notify_on_success" gorm:"default:true"`
+	NotifyOnFailure bool           `json:"notify_on_failure" gorm:"default:true"`
+	IsEnabled       bool           `json:"is_enabled" gorm:"default:true"`
 }
 
 // Task 任务模型
@@ -163,5 +217,34 @@ type SystemSetting struct {
 	UpdatedAt time.Time      `json:"updated_at"`
 	Key       string         `json:"key" gorm:"unique;not null"`
 	Value     string         `json:"value" gorm:"type:text"`
-	Type      string         `json:"type" gorm:"default:string"` // string, number, boolean, json
+	Type      string         `json:"type" gorm:"default:string"`
+}
+
+// Agent 代理模型
+type Agent struct {
+	ID          uint           `json:"id" gorm:"primaryKey"`
+	CreatedAt   time.Time      `json:"created_at"`
+	UpdatedAt   time.Time      `json:"updated_at"`
+	DeletedAt   gorm.DeletedAt `json:"deleted_at" gorm:"index"`
+	Name        string         `json:"name" gorm:"not null"`
+	WorkspaceID uint           `json:"workspace_id" gorm:"not null"`
+	Host        string         `json:"host" gorm:"not null"`
+	Port        int            `json:"port" gorm:"not null;default:8080"`
+	Status      string         `json:"status" gorm:"default:'offline'"`
+	LastSeen    *time.Time     `json:"last_seen"`
+	AuthToken   string         `json:"-"`
+	BackupDir   string         `json:"backup_dir"`
+	IsActive    bool           `json:"is_active" gorm:"default:true"`
+}
+
+// CompressionConfig 压缩配置模型
+type CompressionConfig struct {
+	ID            uint           `json:"id" gorm:"primaryKey"`
+	CreatedAt     time.Time      `json:"created_at"`
+	UpdatedAt     time.Time      `json:"updated_at"`
+	WorkspaceID   uint           `json:"workspace_id" gorm:"not null"`
+	Name          string         `json:"name" gorm:"not null"`
+	CompressionType string       `json:"compression_type" gorm:"default:'gzip'"`
+	Level         int            `json:"level" gorm:"default:6"`
+	IsDefault     bool           `json:"is_default" gorm:"default:false"`
 }

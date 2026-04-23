@@ -1,13 +1,21 @@
 import React, { useEffect, useState } from 'react';
-import { Card, Row, Col, Table, Tag, Progress } from 'antd';
-import { Activity, Database, HardDrive, Clock, TrendingUp, Shield, Server } from 'lucide-react';
+import { Row, Col, Table, Tag, Progress, Card } from 'antd';
+import { Database, HardDrive, CheckCircle, Server, TrendingUp, Clock } from 'lucide-react';
+import { statsAPI, backupAPI } from '../services/api';
 
 interface StatsData {
-  totalDatabases: number;
-  totalBackups: number;
-  successRate: number;
-  storageUsed: number;
-  storageTotal: number;
+  total_databases: number;
+  total_backups: number;
+  success_rate: number;
+  storage_used: number;
+  storage_total: number;
+  active_backups: number;
+  failed_backups: number;
+  pending_backups: number;
+  recent_backups_count: number;
+  total_restores: number;
+  success_restores: number;
+  failed_restores: number;
 }
 
 interface RecentBackup {
@@ -20,58 +28,105 @@ interface RecentBackup {
 }
 
 export const Dashboard: React.FC = () => {
-  const [stats, setStats] = useState<StatsData>({
-    totalDatabases: 12,
-    totalBackups: 156,
-    successRate: 98.5,
-    storageUsed: 245,
-    storageTotal: 500
-  });
+  const [stats, setStats] = useState<StatsData | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [recentBackups, setRecentBackups] = useState<RecentBackup[]>([]);
 
-  const recentBackups: RecentBackup[] = [
-    { id: 1, database: 'MySQL-Production', type: '物理备份', status: 'success', size: '2.4 GB', time: '2小时前' },
-    { id: 2, database: 'PostgreSQL-Main', type: '物理备份', status: 'success', size: '1.8 GB', time: '5小时前' },
-    { id: 3, database: 'MySQL-Staging', type: '逻辑备份', status: 'running', size: '-', time: '进行中' },
-    { id: 4, database: 'PostgreSQL-Dev', type: '物理备份', status: 'failed', size: '-', time: '8小时前' },
-    { id: 5, database: 'MySQL-Analytics', type: '物理备份', status: 'success', size: '3.2 GB', time: '12小时前' },
-  ];
+  useEffect(() => {
+    fetchDashboardData();
+  }, []);
 
-  const systemStatus = [
-    { name: 'MySQL Primary', status: 'online', icon: '◆', color: 'var(--color-success)' },
-    { name: 'MySQL Replica', status: 'online', icon: '◆', color: 'var(--color-success)' },
-    { name: 'PostgreSQL Main', status: 'online', icon: '◆', color: 'var(--color-success)' },
-    { name: 'Backup Agent', status: 'online', icon: '◆', color: 'var(--color-success)' },
-    { name: 'Scheduler', status: 'online', icon: '◆', color: 'var(--color-success)' },
-  ];
+  const fetchDashboardData = async () => {
+    setLoading(true);
+    try {
+      const [statsData, backupsData] = await Promise.all([
+        statsAPI.getDashboardStats(1).catch(() => null),
+        backupAPI.getAll().catch(() => null)
+      ]);
+
+      if (statsData) {
+        setStats(statsData);
+      } else {
+        setStats({
+          total_databases: 0,
+          total_backups: 0,
+          success_rate: 0,
+          storage_used: 0,
+          storage_total: 500,
+          active_backups: 0,
+          failed_backups: 0,
+          pending_backups: 0,
+          recent_backups_count: 0,
+          total_restores: 0,
+          success_restores: 0,
+          failed_restores: 0
+        });
+      }
+
+      if (backupsData?.backups) {
+        const formattedBackups: RecentBackup[] = backupsData.backups.slice(0, 5).map((backup: any) => ({
+          id: backup.id,
+          database: `DB-${backup.database_id}`,
+          type: backup.backup_type === 'physical' ? '物理备份' : '逻辑备份',
+          status: backup.status,
+          size: backup.file_size ? `${(backup.file_size / 1024 / 1024).toFixed(2)} MB` : '-',
+          time: new Date(backup.created_at).toLocaleString()
+        }));
+        setRecentBackups(formattedBackups);
+      }
+    } catch (error) {
+      console.error('Failed to fetch dashboard data:', error);
+      setStats({
+        total_databases: 0,
+        total_backups: 0,
+        success_rate: 0,
+        storage_used: 0,
+        storage_total: 500,
+        active_backups: 0,
+        failed_backups: 0,
+        pending_backups: 0,
+        recent_backups_count: 0,
+        total_restores: 0,
+        success_restores: 0,
+        failed_restores: 0
+      });
+    } finally {
+      setLoading(false);
+    }
+  };
 
   const statCards = [
     {
       label: '数据库总数',
-      value: stats.totalDatabases,
+      value: stats?.total_databases || 0,
       icon: Database,
       color: 'var(--color-primary)',
-      trend: '+2'
+      trend: '+2',
+      trendDirection: 'up'
     },
     {
       label: '备份任务',
-      value: stats.totalBackups,
+      value: stats?.total_backups || 0,
       icon: HardDrive,
-      color: 'var(--color-secondary)',
-      trend: '+12'
+      color: 'var(--color-info)',
+      trend: '+12',
+      trendDirection: 'up'
     },
     {
       label: '成功率',
-      value: `${stats.successRate}%`,
-      icon: TrendingUp,
+      value: `${(stats?.success_rate || 0).toFixed(1)}%`,
+      icon: CheckCircle,
       color: 'var(--color-success)',
-      trend: '+0.5%'
+      trend: '+0.5%',
+      trendDirection: 'up'
     },
     {
       label: '存储使用',
-      value: `${stats.storageUsed}GB`,
+      value: `${(stats?.storage_used || 0).toFixed(2)}GB`,
       icon: Server,
       color: 'var(--color-warning)',
-      trend: `${Math.round(stats.storageUsed / stats.storageTotal * 100)}%`
+      trend: `${Math.round(((stats?.storage_used || 0) / (stats?.storage_total || 500)) * 100)}%`,
+      trendDirection: 'neutral'
     },
   ];
 
@@ -81,7 +136,12 @@ export const Dashboard: React.FC = () => {
       dataIndex: 'database',
       key: 'database',
       render: (text: string) => (
-        <span style={{ fontFamily: 'var(--font-display)', fontWeight: 500 }}>{text}</span>
+        <div className="flex items-center gap-3">
+          <div className="database-icon">
+            <Database size={16} />
+          </div>
+          <span className="font-medium">{text}</span>
+        </div>
       )
     },
     {
@@ -89,13 +149,7 @@ export const Dashboard: React.FC = () => {
       dataIndex: 'type',
       key: 'type',
       render: (text: string) => (
-        <Tag style={{
-          background: 'rgba(0, 240, 255, 0.1)',
-          border: '1px solid rgba(0, 240, 255, 0.3)',
-          color: 'var(--color-primary)'
-        }}>
-          {text}
-        </Tag>
+        <Tag className="backup-type-tag">{text}</Tag>
       )
     },
     {
@@ -103,29 +157,18 @@ export const Dashboard: React.FC = () => {
       dataIndex: 'status',
       key: 'status',
       render: (status: string) => {
-        const statusMap: Record<string, { color: string; text: string }> = {
-          success: { color: 'var(--color-success)', text: '成功' },
-          failed: { color: 'var(--color-error)', text: '失败' },
-          running: { color: 'var(--color-primary)', text: '进行中' }
+        const statusConfig: Record<string, { color: string; text: string; bg: string }> = {
+          success: { color: 'var(--color-success)', text: '成功', bg: 'var(--color-success-bg)' },
+          failed: { color: 'var(--color-danger)', text: '失败', bg: 'var(--color-danger-bg)' },
+          running: { color: 'var(--color-primary)', text: '进行中', bg: 'var(--color-primary-bg)' },
+          pending: { color: 'var(--color-warning)', text: '等待中', bg: 'var(--color-warning-bg)' }
         };
-        const config = statusMap[status] || { color: 'var(--color-text-muted)', text: status };
+        const config = statusConfig[status] || { color: 'var(--color-text-tertiary)', text: status, bg: 'var(--color-bg-hover)' };
         return (
-          <span style={{
-            display: 'inline-flex',
-            alignItems: 'center',
-            gap: '6px',
-            color: config.color
-          }}>
-            <span style={{
-              width: '8px',
-              height: '8px',
-              borderRadius: '50%',
-              background: config.color,
-              boxShadow: status === 'running' ? `0 0 10px ${config.color}` : 'none',
-              animation: status === 'running' ? 'pulse-glow 1.5s ease-in-out infinite' : 'none'
-            }} />
-            {config.text}
-          </span>
+          <div className="status-indicator">
+            <span className={`status-dot ${status}`}></span>
+            <span style={{ color: config.color, fontWeight: 500 }}>{config.text}</span>
+          </div>
         );
       }
     },
@@ -133,387 +176,325 @@ export const Dashboard: React.FC = () => {
       title: '大小',
       dataIndex: 'size',
       key: 'size',
-      render: (text: string) => <span style={{ color: 'var(--color-text-muted)' }}>{text}</span>
+      render: (text: string) => <span className="text-secondary">{text}</span>
     },
     {
       title: '时间',
       dataIndex: 'time',
       key: 'time',
-      render: (text: string) => <span style={{ color: 'var(--color-text-muted)' }}>{text}</span>
+      render: (text: string) => <span className="text-secondary">{text}</span>
     },
   ];
 
   return (
-    <div className="animate-fade-in">
-      <div style={{ marginBottom: '32px' }}>
-        <h1 style={{
-          fontFamily: 'var(--font-display)',
-          fontSize: '28px',
-          fontWeight: '700',
-          color: 'var(--color-text)',
-          marginBottom: '8px',
-          letterSpacing: '2px'
-        }}>
-          控制台
-        </h1>
-        <p style={{
-          color: 'var(--color-text-muted)',
-          fontSize: '14px'
-        }}>
-          实时监控系统状态和数据备份情况
-        </p>
+    <div className="page-container animate-fade-in">
+      <div className="page-header">
+        <h1 className="page-title">控制台</h1>
+        <p className="page-description">实时监控系统状态和数据备份情况</p>
       </div>
 
-      <div style={{
-        display: 'grid',
-        gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))',
-        gap: '20px',
-        marginBottom: '32px'
-      }}>
-        {statCards.map((stat, index) => (
-          <div
-            key={index}
-            className="cyber-stat-card animate-slide-in-up"
-            style={{
-              animationDelay: `${index * 0.1}s`,
-              animationFillMode: 'both'
-            }}
-          >
-            <div style={{
-              display: 'flex',
-              alignItems: 'flex-start',
-              justifyContent: 'space-between',
-              marginBottom: '16px'
-            }}>
-              <div style={{
-                width: '48px',
-                height: '48px',
-                borderRadius: '12px',
-                background: `linear-gradient(135deg, ${stat.color}20 0%, ${stat.color}10 100%)`,
-                border: `1px solid ${stat.color}30`,
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center'
-              }}>
-                <stat.icon size={24} style={{ color: stat.color }} />
-              </div>
-              <span style={{
-                fontSize: '12px',
-                color: 'var(--color-success)',
-                background: 'rgba(0, 255, 136, 0.1)',
-                padding: '4px 8px',
-                borderRadius: '12px',
-                fontFamily: 'var(--font-display)'
-              }}>
-                {stat.trend}
-              </span>
-            </div>
-            <div className="cyber-stat-value" style={{ color: stat.color }}>
-              {stat.value}
-            </div>
-            <div className="cyber-stat-label">{stat.label}</div>
-
-            <div style={{
-              position: 'absolute',
-              bottom: 0,
-              left: 0,
-              right: 0,
-              height: '3px',
-              background: 'rgba(0, 240, 255, 0.1)',
-              borderRadius: '0 0 16px 16px',
-              overflow: 'hidden'
-            }}>
-              <div style={{
-                width: `${Math.random() * 40 + 60}%`,
-                height: '100%',
-                background: `linear-gradient(90deg, ${stat.color}80, ${stat.color})`,
-                animation: 'gradient-shift 2s ease infinite',
-                backgroundSize: '200% 100%'
-              }} />
-            </div>
-          </div>
-        ))}
-      </div>
-
-      <div style={{
-        display: 'grid',
-        gridTemplateColumns: 'repeat(auto-fit, minmax(400px, 1fr))',
-        gap: '24px'
-      }}>
-        <div
-          className="cyber-card animate-slide-in-up"
-          style={{ animationDelay: '0.4s', animationFillMode: 'both' }}
-        >
-          <div style={{
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'space-between',
-            marginBottom: '24px'
-          }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-              <Activity size={20} style={{ color: 'var(--color-primary)' }} />
-              <h3 style={{
-                fontFamily: 'var(--font-display)',
-                fontSize: '16px',
-                fontWeight: '600',
-                color: 'var(--color-text)',
-                margin: 0,
-                letterSpacing: '1px'
-              }}>
-                最近备份
-              </h3>
-            </div>
-            <span style={{
-              fontSize: '12px',
-              color: 'var(--color-text-muted)'
-            }}>
-              实时更新
-            </span>
-          </div>
-
-          <Table
-            columns={columns}
-            dataSource={recentBackups}
-            rowKey="id"
-            pagination={false}
-            size="small"
-            style={{
-              background: 'transparent'
-            }}
-          />
-        </div>
-
-        <div
-          className="cyber-card animate-slide-in-up"
-          style={{ animationDelay: '0.5s', animationFillMode: 'both' }}
-        >
-          <div style={{
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'space-between',
-            marginBottom: '24px'
-          }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-              <Shield size={20} style={{ color: 'var(--color-secondary)' }} />
-              <h3 style={{
-                fontFamily: 'var(--font-display)',
-                fontSize: '16px',
-                fontWeight: '600',
-                color: 'var(--color-text)',
-                margin: 0,
-                letterSpacing: '1px'
-              }}>
-                系统状态
-              </h3>
-            </div>
-            <div style={{
-              display: 'flex',
-              alignItems: 'center',
-              gap: '6px',
-              color: 'var(--color-success)',
-              fontSize: '12px'
-            }}>
-              <span style={{
-                width: '8px',
-                height: '8px',
-                borderRadius: '50%',
-                background: 'var(--color-success)',
-                boxShadow: '0 0 10px var(--color-success)',
-                animation: 'pulse-glow 2s ease-in-out infinite'
-              }} />
-              全部正常
-            </div>
-          </div>
-
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-            {systemStatus.map((system, index) => (
+      <div className="dashboard-grid">
+        <Row gutter={[24, 24]}>
+          {statCards.map((stat, index) => (
+            <Col xs={24} sm={12} lg={6} key={index}>
               <div
-                key={index}
+                className="stat-card animate-slide-up"
                 style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'space-between',
-                  padding: '12px 16px',
-                  background: 'rgba(0, 240, 255, 0.02)',
-                  borderRadius: '8px',
-                  border: '1px solid rgba(0, 240, 255, 0.05)',
-                  transition: 'all 0.3s ease'
-                }}
-                onMouseEnter={(e) => {
-                  e.currentTarget.style.background = 'rgba(0, 240, 255, 0.05)';
-                  e.currentTarget.style.borderColor = 'rgba(0, 240, 255, 0.15)';
-                }}
-                onMouseLeave={(e) => {
-                  e.currentTarget.style.background = 'rgba(0, 240, 255, 0.02)';
-                  e.currentTarget.style.borderColor = 'rgba(0, 240, 255, 0.05)';
-                }}
+                  animationDelay: `${index * 0.1}s`,
+                  '--stat-color': stat.color,
+                  '--stat-bg': `${stat.color}15`
+                } as React.CSSProperties}
               >
-                <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-                  <span style={{ color: system.color, fontSize: '14px' }}>{system.icon}</span>
-                  <span style={{
-                    fontFamily: 'var(--font-body)',
-                    fontSize: '14px',
-                    color: 'var(--color-text)'
-                  }}>
-                    {system.name}
+                <div className="stat-card-header">
+                  <div className="stat-card-icon">
+                    <stat.icon size={24} />
+                  </div>
+                  <span className={`stat-card-trend ${stat.trendDirection}`}>
+                    {stat.trendDirection === 'up' && '↑'}
+                    {stat.trendDirection === 'down' && '↓'}
+                    {stat.trend}
                   </span>
                 </div>
-                <div style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: '8px'
-                }}>
-                  <span style={{
-                    width: '6px',
-                    height: '6px',
-                    borderRadius: '50%',
-                    background: system.color,
-                    boxShadow: `0 0 8px ${system.color}`
-                  }} />
-                  <span style={{
-                    fontSize: '12px',
-                    color: system.color,
-                    fontFamily: 'var(--font-display)'
-                  }}>
-                    在线
-                  </span>
+                <div className="stat-card-value">{stat.value}</div>
+                <div className="stat-card-label">{stat.label}</div>
+              </div>
+            </Col>
+          ))}
+        </Row>
+
+        <Row gutter={[24, 24]} style={{ marginTop: '24px' }}>
+          <Col xs={24} lg={14}>
+            <Card
+              title={
+                <div className="card-title">
+                  <TrendingUp size={18} />
+                  <span>最近备份</span>
+                </div>
+              }
+              className="dashboard-card animate-slide-up"
+              style={{ animationDelay: '0.4s' }}
+              extra={<span className="text-xs text-tertiary">实时更新</span>}
+            >
+              <Table
+                columns={columns}
+                dataSource={recentBackups}
+                rowKey="id"
+                pagination={false}
+                loading={loading}
+                size="middle"
+              />
+            </Card>
+          </Col>
+
+          <Col xs={24} lg={10}>
+            <Card
+              title={
+                <div className="card-title">
+                  <Server size={18} />
+                  <span>系统状态</span>
+                </div>
+              }
+              className="dashboard-card animate-slide-up"
+              style={{ animationDelay: '0.5s' }}
+              extra={
+                <div className="status-indicator">
+                  <span className="status-dot online"></span>
+                  <span className="text-xs text-success">全部正常</span>
+                </div>
+              }
+            >
+              <div className="system-status-list">
+                <div className="system-status-item">
+                  <div className="system-status-info">
+                    <span className="status-dot online"></span>
+                    <span className="system-status-name">PostgreSQL Primary</span>
+                  </div>
+                  <div className="system-status-metrics">
+                    <span className="system-status-response">{stats?.active_backups || 0}</span>
+                    <span className="text-xs text-tertiary">活跃任务</span>
+                  </div>
+                </div>
+                <div className="system-status-item">
+                  <div className="system-status-info">
+                    <span className="status-dot online"></span>
+                    <span className="system-status-name">MySQL Replica</span>
+                  </div>
+                  <div className="system-status-metrics">
+                    <span className="system-status-response">{stats?.pending_backups || 0}</span>
+                    <span className="text-xs text-tertiary">等待中</span>
+                  </div>
+                </div>
+                <div className="system-status-item">
+                  <div className="system-status-info">
+                    <span className="status-dot warning"></span>
+                    <span className="system-status-name">Backup Agent</span>
+                  </div>
+                  <div className="system-status-metrics">
+                    <span className="system-status-response">{stats?.failed_backups || 0}</span>
+                    <span className="text-xs text-tertiary">失败</span>
+                  </div>
+                </div>
+                <div className="system-status-item">
+                  <div className="system-status-info">
+                    <span className="status-dot online"></span>
+                    <span className="system-status-name">恢复任务</span>
+                  </div>
+                  <div className="system-status-metrics">
+                    <span className="system-status-response">{stats?.total_restores || 0}</span>
+                    <span className="text-xs text-tertiary">总数</span>
+                  </div>
                 </div>
               </div>
-            ))}
-          </div>
-        </div>
+            </Card>
+          </Col>
+        </Row>
+
+        <Card
+          title={
+            <div className="card-title">
+              <Clock size={18} />
+              <span>存储概览</span>
+            </div>
+          }
+          className="dashboard-card animate-slide-up"
+          style={{ marginTop: '24px', animationDelay: '0.6s' }}
+        >
+          <Row gutter={[32, 24]}>
+            <Col xs={24} md={8}>
+              <div className="storage-metric">
+                <div className="storage-metric-header">
+                  <span className="text-sm text-secondary">已用空间</span>
+                  <span className="text-sm font-semibold" style={{ color: 'var(--color-primary)' }}>
+                    {(stats?.storage_used || 0).toFixed(2)} GB / {stats?.storage_total || 500} GB
+                  </span>
+                </div>
+                <Progress
+                  percent={Math.round(((stats?.storage_used || 0) / (stats?.storage_total || 500)) * 100)}
+                  strokeColor={{
+                    '0%': 'var(--color-primary)',
+                    '100%': 'var(--color-info)'
+                  }}
+                  trailColor="var(--color-bg-hover)"
+                  showInfo={false}
+                />
+                <div className="storage-metric-footer">
+                  <span className="text-xs text-tertiary">0 GB</span>
+                  <span className="text-xs text-tertiary">{stats?.storage_total || 500} GB</span>
+                </div>
+              </div>
+            </Col>
+
+            <Col xs={24} md={8}>
+              <div className="storage-metric">
+                <div className="storage-metric-header">
+                  <span className="text-sm text-secondary">本周备份</span>
+                  <span className="text-sm font-semibold" style={{ color: 'var(--color-info)' }}>
+                    {stats?.recent_backups_count || 0}
+                  </span>
+                </div>
+                <Progress
+                  percent={Math.min(((stats?.recent_backups_count || 0) / 50) * 100, 100)}
+                  strokeColor="var(--color-info)"
+                  trailColor="var(--color-bg-hover)"
+                  showInfo={false}
+                />
+                <div className="storage-metric-footer">
+                  <span className="text-xs text-tertiary">本周目标: 50</span>
+                </div>
+              </div>
+            </Col>
+
+            <Col xs={24} md={8}>
+              <div className="storage-metric">
+                <div className="storage-metric-header">
+                  <span className="text-sm text-secondary">恢复成功率</span>
+                  <span className="text-sm font-semibold" style={{ color: 'var(--color-warning)' }}>
+                    {stats && stats.total_restores > 0
+                      ? Math.round((stats.success_restores / stats.total_restores) * 100)
+                      : 0}%
+                  </span>
+                </div>
+                <Progress
+                  percent={stats && stats.total_restores > 0
+                    ? Math.round((stats.success_restores / stats.total_restores) * 100)
+                    : 0}
+                  strokeColor="var(--color-warning)"
+                  trailColor="var(--color-bg-hover)"
+                  showInfo={false}
+                />
+                <div className="storage-metric-footer">
+                  <span className="text-xs text-tertiary">成功: {stats?.success_restores || 0} / {stats?.total_restores || 0}</span>
+                </div>
+              </div>
+            </Col>
+          </Row>
+        </Card>
       </div>
 
-      <div
-        className="cyber-card animate-slide-in-up"
-        style={{
-          marginTop: '24px',
-          animationDelay: '0.6s',
-          animationFillMode: 'both'
-        }}
-      >
-        <div style={{
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'space-between',
-          marginBottom: '24px'
-        }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-            <Clock size={20} style={{ color: 'var(--color-warning)' }} />
-            <h3 style={{
-              fontFamily: 'var(--font-display)',
-              fontSize: '16px',
-              fontWeight: '600',
-              color: 'var(--color-text)',
-              margin: 0,
-              letterSpacing: '1px'
-            }}>
-              存储概览
-            </h3>
-          </div>
-        </div>
+      <style>{`
+        .dashboard-grid {
+          width: 100%;
+        }
 
-        <div style={{
-          display: 'grid',
-          gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))',
-          gap: '24px'
-        }}>
-          <div>
-            <div style={{
-              display: 'flex',
-              justifyContent: 'space-between',
-              marginBottom: '12px'
-            }}>
-              <span style={{ color: 'var(--color-text-muted)', fontSize: '13px' }}>已用空间</span>
-              <span style={{
-                fontFamily: 'var(--font-display)',
-                fontSize: '14px',
-                color: 'var(--color-primary)'
-              }}>
-                {stats.storageUsed} GB
-              </span>
-            </div>
-            <Progress
-              percent={Math.round(stats.storageUsed / stats.storageTotal * 100)}
-              strokeColor={{
-                '0%': 'var(--color-primary)',
-                '100%': 'var(--color-secondary)'
-              }}
-              trailColor="rgba(0, 240, 255, 0.1)"
-              showInfo={false}
-            />
-            <div style={{
-              display: 'flex',
-              justifyContent: 'space-between',
-              marginTop: '8px'
-            }}>
-              <span style={{ color: 'var(--color-text-muted)', fontSize: '11px' }}>0 GB</span>
-              <span style={{ color: 'var(--color-text-muted)', fontSize: '11px' }}>{stats.storageTotal} GB</span>
-            </div>
-          </div>
+        .dashboard-card {
+          height: 100%;
+        }
 
-          <div>
-            <div style={{
-              display: 'flex',
-              justifyContent: 'space-between',
-              marginBottom: '12px'
-            }}>
-              <span style={{ color: 'var(--color-text-muted)', fontSize: '13px' }}>备份文件数</span>
-              <span style={{
-                fontFamily: 'var(--font-display)',
-                fontSize: '14px',
-                color: 'var(--color-secondary)'
-              }}>
-                156
-              </span>
-            </div>
-            <Progress
-              percent={78}
-              strokeColor="var(--color-secondary)"
-              trailColor="rgba(0, 255, 136, 0.1)"
-              showInfo={false}
-            />
-            <div style={{
-              display: 'flex',
-              justifyContent: 'space-between',
-              marginTop: '8px'
-            }}>
-              <span style={{ color: 'var(--color-text-muted)', fontSize: '11px' }}>0</span>
-              <span style={{ color: 'var(--color-text-muted)', fontSize: '11px' }}>200</span>
-            </div>
-          </div>
+        .stat-card-header {
+          display: flex;
+          align-items: flex-start;
+          justify-content: space-between;
+          margin-bottom: 16px;
+        }
 
-          <div>
-            <div style={{
-              display: 'flex',
-              justifyContent: 'space-between',
-              marginBottom: '12px'
-            }}>
-              <span style={{ color: 'var(--color-text-muted)', fontSize: '13px' }}>本周备份</span>
-              <span style={{
-                fontFamily: 'var(--font-display)',
-                fontSize: '14px',
-                color: 'var(--color-warning)'
-              }}>
-                42
-              </span>
-            </div>
-            <Progress
-              percent={84}
-              strokeColor="var(--color-warning)"
-              trailColor="rgba(255, 170, 0, 0.1)"
-              showInfo={false}
-            />
-            <div style={{
-              display: 'flex',
-              justifyContent: 'space-between',
-              marginTop: '8px'
-            }}>
-              <span style={{ color: 'var(--color-text-muted)', fontSize: '11px' }}>本周目标: 50</span>
-            </div>
-          </div>
-        </div>
-      </div>
+        .database-icon {
+          width: 32px;
+          height: 32px;
+          border-radius: var(--radius-md);
+          background: var(--color-primary-bg);
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          color: var(--color-primary);
+        }
+
+        .backup-type-tag {
+          background: var(--color-primary-bg);
+          color: var(--color-primary);
+          border: none;
+          font-weight: 500;
+        }
+
+        .system-status-list {
+          display: flex;
+          flex-direction: column;
+          gap: 12px;
+        }
+
+        .system-status-item {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          padding: 12px 16px;
+          background: var(--color-bg-elevated);
+          border-radius: var(--radius-lg);
+          transition: all var(--transition-fast);
+        }
+
+        .system-status-item:hover {
+          background: var(--color-bg-hover);
+        }
+
+        .system-status-info {
+          display: flex;
+          align-items: center;
+          gap: 12px;
+        }
+
+        .system-status-name {
+          font-size: 14px;
+          font-weight: 500;
+          color: var(--color-text-primary);
+        }
+
+        .system-status-metrics {
+          display: flex;
+          align-items: center;
+          gap: 8px;
+        }
+
+        .system-status-response {
+          font-family: var(--font-display);
+          font-size: 13px;
+          font-weight: 600;
+          color: var(--color-success);
+        }
+
+        .storage-metric {
+          padding: 16px;
+          background: var(--color-bg-elevated);
+          border-radius: var(--radius-lg);
+        }
+
+        .storage-metric-header {
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+          margin-bottom: 12px;
+        }
+
+        .storage-metric-footer {
+          display: flex;
+          justify-content: space-between;
+          margin-top: 8px;
+        }
+
+        @media (max-width: 768px) {
+          .stat-card {
+            margin-bottom: 0;
+          }
+        }
+      `}</style>
     </div>
   );
 };
