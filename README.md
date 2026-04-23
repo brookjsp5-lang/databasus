@@ -1,4 +1,4 @@
-# DatabasUS - 数据库备份工具
+# DataTrue - 数据库备份工具
 
 <div align="center">
 
@@ -15,7 +15,7 @@
 
 ## 📖 项目简介
 
-本项目是DatabasUS数据库备份工具的Go+React实现版本，专注于提供轻量、高效的数据库备份与恢复解决方案。项目采用前后端分离架构，后端使用Go语言（Gin框架），前端使用React + TypeScript + Vite构建。
+本项目是DataTrue数据库备份工具的Go+React实现版本，专注于提供轻量、高效的数据库备份与恢复解决方案。项目采用前后端分离架构，后端使用Go语言（Gin框架)，前端使用React + TypeScript + Vite构建。
 
 ### 技术栈
 
@@ -154,8 +154,8 @@ workspace/
 
 1. **克隆代码**
 ```bash
-git clone https://github.com/brookjsp5-lang/databasus.git
-cd databasus
+git clone https://github.com/brookjsp5-lang/datatrue.git
+cd datatrue
 ```
 
 2. **启动服务**
@@ -168,7 +168,7 @@ docker compose up -d
 - 后端API：http://localhost:6001
 
 4. **默认登录**
-- 邮箱：`admin@databasus.io`
+- 邮箱：`admin@datatrue.io`
 - 密码：`admin123`
 
 ### 开发环境
@@ -260,7 +260,7 @@ pnpm dev
 | `DB_PORT` | PostgreSQL端口 | 5432 |
 | `DB_USER` | 数据库用户 | postgres |
 | `DB_PASSWORD` | 数据库密码 | postgres123 |
-| `DB_NAME` | 数据库名称 | databasus |
+| `DB_NAME` | 数据库名称 | datatrue |
 | `DB_SSLMODE` | SSL模式 | disable |
 | `REDIS_ADDR` | Redis地址 | redis:6379 |
 | `JWT_SECRET` | JWT密钥 | - |
@@ -289,7 +289,7 @@ pnpm dev
 2. 确认备份用户权限是否足够
 3. 查看API日志：
    ```bash
-   docker logs databus-api
+   docker logs datatrue-api
    ```
 
 **Q2: PostgreSQL备份需要什么权限？**
@@ -370,6 +370,6 @@ GRANT PROCESS ON *.* TO 'backup_user'@'%';
 
 <div align="center">
 
-**DatabasUS** - 让数据库备份变得简单
+**DataTrue** - 让数据库备份变得简单
 
 </div>
