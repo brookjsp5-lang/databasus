@@ -4,8 +4,8 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/databasus-new/api/internal/config"
-	"github.com/databasus-new/api/pkg/websocket"
+	"github.com/datatrue-new/api/internal/config"
+	"github.com/datatrue-new/api/pkg/websocket"
 	"github.com/gin-gonic/gin"
 	"github.com/redis/go-redis/v9"
 	"gorm.io/gorm"
@@ -124,6 +124,8 @@ func SetupRoutes(router *gin.Engine, db *gorm.DB, redisClient *redis.Client, cfg
 		apiGroup.PUT("/alerts/read-all", alertHandler.MarkAllAsRead)
 		apiGroup.DELETE("/alerts/:id", alertHandler.Delete)
 		apiGroup.GET("/alerts/unread-count", alertHandler.GetUnreadCount)
+		apiGroup.GET("/alerts/preferences", alertHandler.GetPreferences)
+		apiGroup.POST("/alerts/preferences", alertHandler.SavePreferences)
 
 		settingsHandler := NewSettingsHandler(db)
 		apiGroup.GET("/settings", settingsHandler.GetAll)

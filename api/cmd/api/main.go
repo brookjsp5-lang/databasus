@@ -6,11 +6,11 @@ import (
 	"os"
 	"time"
 
-	"github.com/databasus-new/api/internal/config"
-	"github.com/databasus-new/api/internal/handlers"
-	"github.com/databasus-new/api/pkg/backup"
-	"github.com/databasus-new/api/pkg/database"
-	"github.com/databasus-new/api/pkg/scheduler"
+	"github.com/datatrue-new/api/internal/config"
+	"github.com/datatrue-new/api/internal/handlers"
+	"github.com/datatrue-new/api/pkg/backup"
+	"github.com/datatrue-new/api/pkg/database"
+	"github.com/datatrue-new/api/pkg/scheduler"
 	"github.com/gin-gonic/gin"
 	"github.com/joho/godotenv"
 )
@@ -75,7 +75,7 @@ func main() {
 	router.GET("/", func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{
 			"status":  "ok",
-			"message": "DatabasUS API Server",
+			"message": "DataTrue API Server",
 		})
 	})
 

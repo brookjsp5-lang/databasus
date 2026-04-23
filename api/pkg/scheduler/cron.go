@@ -5,7 +5,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/databasus-new/api/internal/models"
+	"github.com/datatrue-new/api/internal/models"
 	"github.com/robfig/cron/v3"
 	"gorm.io/gorm"
 )

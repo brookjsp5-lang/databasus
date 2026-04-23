@@ -12,8 +12,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/databasus-new/api/internal/models"
-	"github.com/databasus-new/api/pkg/backup"
+	"github.com/datatrue-new/api/internal/models"
+	"github.com/datatrue-new/api/pkg/backup"
 )
 
 func MySQLPITRRestore(ctx context.Context, db models.MySQLDatabase, backupPath string, pitrTime *time.Time) error {

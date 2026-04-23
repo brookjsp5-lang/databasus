@@ -6,7 +6,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/databasus-new/api/internal/models"
+	"github.com/datatrue-new/api/internal/models"
 	"github.com/gin-gonic/gin"
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/redis/go-redis/v9"

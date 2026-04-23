@@ -1,10 +1,11 @@
 package handlers
 
 import (
+	"encoding/json"
 	"net/http"
 	"strconv"
 
-	"github.com/databasus-new/api/internal/models"
+	"github.com/datatrue-new/api/internal/models"
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
 )
@@ -118,4 +119,60 @@ func (h *AlertHandler) GetUnreadCount(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{"count": count})
+}
+
+type AlertPreferences struct {
+	EmailEnabled  bool `json:"email_enabled"`
+	WebhookEnabled bool `json:"webhook_enabled"`
+	SlackEnabled  bool `json:"slack_enabled"`
+	TelegramEnabled bool `json:"telegram_enabled"`
+	NotifyOnSuccess bool `json:"notify_on_success"`
+	NotifyOnFailure bool `json:"notify_on_failure"`
+	NotifyOnWarning bool `json:"notify_on_warning"`
+}
+
+func (h *AlertHandler) GetPreferences(c *gin.Context) {
+	workspaceID := c.Query("workspace_id")
+	if workspaceID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "workspace_id is required"})
+		return
+	}
+
+	var prefs AlertPreferences
+	var setting models.SystemSetting
+
+	if err := h.db.Where("key = ? AND workspace_id = ?", "alert_preferences", workspaceID).First(&setting).Error; err == nil {
+		if setting.Type == "json" {
+			json.Unmarshal([]byte(setting.Value), &prefs)
+		}
+	}
+
+	c.JSON(http.StatusOK, gin.H{"preferences": prefs})
+}
+
+func (h *AlertHandler) SavePreferences(c *gin.Context) {
+	workspaceID := c.Query("workspace_id")
+	if workspaceID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "workspace_id is required"})
+		return
+	}
+
+	var prefs AlertPreferences
+	if err := c.ShouldBindJSON(&prefs); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request body"})
+		return
+	}
+
+	prefsJSON, _ := json.Marshal(prefs)
+
+	setting := models.SystemSetting{
+		Key:       "alert_preferences",
+		Value:     string(prefsJSON),
+		Type:      "json",
+		WorkspaceID: func() uint { id, _ := strconv.ParseUint(workspaceID, 10, 32); return uint(id) }(),
+	}
+
+	h.db.Where("key = ? AND workspace_id = ?", "alert_preferences", workspaceID).Assign(&setting).FirstOrCreate(&setting)
+
+	c.JSON(http.StatusOK, gin.H{"message": "Preferences saved successfully", "preferences": prefs})
 }

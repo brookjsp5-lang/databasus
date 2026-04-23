@@ -225,7 +225,7 @@ export const DatabaseWizard: React.FC<DatabaseWizardProps> = ({ onComplete, onCa
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             msgtype: 'text',
-            text: { content: 'DatabasUS 通知测试消息' }
+            text: { content: 'DataTrue 通知测试消息' }
           })
         });
         message.success('Webhook通知测试成功！');
@@ -743,7 +743,7 @@ export const DatabaseWizard: React.FC<DatabaseWizardProps> = ({ onComplete, onCa
                     label="本地路径"
                     rules={[{ required: true, message: '请输入本地存储路径' }]}
                   >
-                    <Input placeholder="/var/backups/databasus" />
+                    <Input placeholder="/var/backups/datatrue" />
                   </Form.Item>
                 );
               }

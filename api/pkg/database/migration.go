@@ -5,7 +5,7 @@ import (
 	"log"
 	"os"
 
-	"github.com/databasus-new/api/internal/models"
+	"github.com/datatrue-new/api/internal/models"
 	"gorm.io/gorm"
 )
 

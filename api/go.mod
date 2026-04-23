@@ -1,4 +1,4 @@
-module github.com/databasus-new/api
+module github.com/datatrue-new/api
 
 go 1.23
 

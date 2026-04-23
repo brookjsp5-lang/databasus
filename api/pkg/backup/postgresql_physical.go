@@ -8,7 +8,7 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/databasus-new/api/internal/models"
+	"github.com/datatrue-new/api/internal/models"
 )
 
 func PostgreSQLPhysicalBackup(ctx context.Context, db models.PostgreSQLDatabase, storagePath string) (string, int64, error) {
@@ -98,7 +98,7 @@ func PostgreSQLWALArchive(ctx context.Context, db models.PostgreSQLDatabase, sto
 		"-U", db.User,
 		"-D", archiveDir,
 		"--compress=gzip",
-		"--slot", fmt.Sprintf("databasus_slot_%d", db.ID),
+		"--slot", fmt.Sprintf("datatrue_slot_%d", db.ID),
 		"--no-loop",
 	)
 

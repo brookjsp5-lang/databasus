@@ -11,7 +11,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/databasus-new/api/internal/models"
+	"github.com/datatrue-new/api/internal/models"
 )
 
 type PITRRestoreResult struct {
@@ -30,7 +30,7 @@ func PostgreSQLPITRRestore(ctx context.Context, db models.PostgreSQLDatabase, ba
 	}
 
 	timestamp := time.Now().Format("20060102150405")
-	restoreBaseDir := filepath.Join(os.TempDir(), "databasus_pitr")
+	restoreBaseDir := filepath.Join(os.TempDir(), "datatrue_pitr")
 	restoreDir := filepath.Join(restoreBaseDir, fmt.Sprintf("restore_%s_%d", timestamp, db.ID))
 
 	if err := os.MkdirAll(restoreDir, 0755); err != nil {
@@ -164,7 +164,7 @@ func configurePITRRecovery(ctx context.Context, pgDataDir string, db models.Post
 
 func PostgreSQLFullRestore(ctx context.Context, db models.PostgreSQLDatabase, backupPath string) error {
 	timestamp := time.Now().Format("20060102150405")
-	restoreBaseDir := filepath.Join(os.TempDir(), "databasus_restore")
+	restoreBaseDir := filepath.Join(os.TempDir(), "datatrue_restore")
 	restoreDir := filepath.Join(restoreBaseDir, fmt.Sprintf("restore_%s_%d", timestamp, db.ID))
 
 	if err := os.MkdirAll(restoreDir, 0755); err != nil {

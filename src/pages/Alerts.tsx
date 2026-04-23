@@ -96,7 +96,7 @@ export const Alerts: React.FC = () => {
     password: '',
     encryption: 'tls',
     from_address: '',
-    from_name: 'DatabasUS',
+    from_name: 'DataTrue',
     is_enabled: false,
   });
 
@@ -524,7 +524,7 @@ export const Alerts: React.FC = () => {
                     <Select options={encryptionOptions} onChange={handleEncryptionChange} placeholder="选择加密类型" />
                   </Form.Item>
                   <Form.Item name="from_name" label="发件人名称" rules={[{ required: true, message: '请输入发件人名称' }]}>
-                    <Input placeholder="DatabasUS System" />
+                    <Input placeholder="DataTrue System" />
                   </Form.Item>
                 </div>
 

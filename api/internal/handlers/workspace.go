@@ -4,8 +4,8 @@ import (
 	"encoding/json"
 	"net/http"
 
-	"github.com/databasus-new/api/internal/models"
-	"github.com/databasus-new/api/pkg/auth"
+	"github.com/datatrue-new/api/internal/models"
+	"github.com/datatrue-new/api/pkg/auth"
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
 )

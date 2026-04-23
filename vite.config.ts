@@ -21,7 +21,7 @@ export default defineConfig({
   server: {
     watch: {
       usePolling: true,
-      ignored: ['**/.pnpm-store/**', '**/databasus/**', '**/api/**']
+      ignored: ['**/.pnpm-store/**', '**/datatrue/**', '**/api/**']
     },
     proxy: {
       '/api': {

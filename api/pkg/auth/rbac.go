@@ -1,7 +1,7 @@
 package auth
 
 import (
-	"github.com/databasus-new/api/internal/models"
+	"github.com/datatrue-new/api/internal/models"
 )
 
 type Role string

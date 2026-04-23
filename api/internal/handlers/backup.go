@@ -5,8 +5,8 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/databasus-new/api/internal/models"
-	"github.com/databasus-new/api/pkg/scheduler"
+	"github.com/datatrue-new/api/internal/models"
+	"github.com/datatrue-new/api/pkg/scheduler"
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
 )

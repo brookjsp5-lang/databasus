@@ -11,7 +11,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/databasus-new/api/internal/models"
+	"github.com/datatrue-new/api/internal/models"
 	"github.com/redis/go-redis/v9"
 	"gorm.io/gorm"
 )

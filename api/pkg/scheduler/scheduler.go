@@ -12,9 +12,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/databasus-new/api/internal/models"
-	"github.com/databasus-new/api/pkg/restore"
-	"github.com/databasus-new/api/pkg/websocket"
+	"github.com/datatrue-new/api/internal/models"
+	"github.com/datatrue-new/api/pkg/restore"
+	"github.com/datatrue-new/api/pkg/websocket"
 	"github.com/redis/go-redis/v9"
 	"gorm.io/gorm"
 )

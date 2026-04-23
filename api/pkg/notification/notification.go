@@ -10,7 +10,7 @@ import (
 	"net/smtp"
 	"time"
 
-	"github.com/databasus-new/api/internal/models"
+	"github.com/datatrue-new/api/internal/models"
 	"gorm.io/gorm"
 )
 
@@ -309,8 +309,8 @@ func (e *EmailNotifier) Test(to string) error {
 
 	testMsg := NotificationMessage{
 		Type:    NotificationTypeTestEmail,
-		Title:   "DatabasUS 邮件通知测试",
-		Message: "这是一封来自DatabasUS系统的测试邮件。如果您收到此邮件，说明SMTP配置正确。",
+		Title:   "DataTrue 邮件通知测试",
+		Message: "这是一封来自DataTrue系统的测试邮件。如果您收到此邮件，说明SMTP配置正确。",
 		Time:    time.Now(),
 	}
 
@@ -437,7 +437,7 @@ func (d *DingTalkNotifier) Test(to string) error {
 	return d.Send(context.Background(), NotificationMessage{
 		Type:    NotificationTypeTestEmail,
 		Title:   "钉钉通知测试",
-		Message: "这是一条来自DatabasUS系统的测试消息。",
+		Message: "这是一条来自DataTrue系统的测试消息。",
 		Time:    time.Now(),
 	}, to)
 }
@@ -493,7 +493,7 @@ func (w *WeChatNotifier) Test(to string) error {
 	return w.Send(context.Background(), NotificationMessage{
 		Type:    NotificationTypeTestEmail,
 		Title:   "企业微信通知测试",
-		Message: "这是一条来自DatabasUS系统的测试消息。",
+		Message: "这是一条来自DataTrue系统的测试消息。",
 		Time:    time.Now(),
 	}, to)
 }
@@ -560,7 +560,7 @@ func (w *WebhookNotifier) Test(to string) error {
 	return w.Send(context.Background(), NotificationMessage{
 		Type:    NotificationTypeTestEmail,
 		Title:   "Webhook通知测试",
-		Message: "这是一条来自DatabasUS系统的测试消息。",
+		Message: "这是一条来自DataTrue系统的测试消息。",
 		Time:    time.Now(),
 	}, to)
 }

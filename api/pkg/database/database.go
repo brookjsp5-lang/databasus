@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/databasus-new/api/internal/config"
+	"github.com/datatrue-new/api/internal/config"
 	"github.com/redis/go-redis/v9"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
