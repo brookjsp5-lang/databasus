@@ -92,7 +92,7 @@ export const AppLayout: React.FC<LayoutProps> = ({ children }) => {
                 color: 'var(--color-text)',
                 letterSpacing: '2px'
               }}>
-                DATABASUS
+                DataTrue
               </div>
               <div style={{
                 fontSize: '10px',

@@ -54,6 +54,12 @@ func (h *AuthHandler) Register(c *gin.Context) {
 		return
 	}
 
+	var existingUsername models.User
+	if err := h.db.Where("username = ?", req.Username).First(&existingUsername).Error; err == nil {
+		c.JSON(http.StatusConflict, gin.H{"error": "Username already taken"})
+		return
+	}
+
 	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(req.Password), bcrypt.DefaultCost)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to hash password"})

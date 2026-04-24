@@ -212,12 +212,13 @@ type Alert struct {
 
 // SystemSetting 系统设置模型
 type SystemSetting struct {
-	ID        uint           `json:"id" gorm:"primaryKey"`
-	CreatedAt time.Time      `json:"created_at"`
-	UpdatedAt time.Time      `json:"updated_at"`
-	Key       string         `json:"key" gorm:"unique;not null"`
-	Value     string         `json:"value" gorm:"type:text"`
-	Type      string         `json:"type" gorm:"default:string"`
+	ID          uint           `json:"id" gorm:"primaryKey"`
+	CreatedAt   time.Time      `json:"created_at"`
+	UpdatedAt   time.Time      `json:"updated_at"`
+	WorkspaceID uint           `json:"workspace_id" gorm:"index"`
+	Key         string         `json:"key" gorm:"uniqueIndex:idx_workspace_key;not null"`
+	Value       string         `json:"value" gorm:"type:text"`
+	Type        string         `json:"type" gorm:"default:string"`
 }
 
 // Agent 代理模型
