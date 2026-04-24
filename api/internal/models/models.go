@@ -175,6 +175,35 @@ type BackupConfig struct {
 	NotifyOnSuccess bool           `json:"notify_on_success" gorm:"default:true"`
 	NotifyOnFailure bool           `json:"notify_on_failure" gorm:"default:true"`
 	IsEnabled       bool           `json:"is_enabled" gorm:"default:true"`
+	
+	// GFS保留策略配置
+	GFSTierEnabled       bool   `json:"gfs_tier_enabled" gorm:"default:false"`
+	GFSSonEnabled        bool   `json:"gfs_son_enabled" gorm:"default:true"`
+	GFSSonRetentionDays  int    `json:"gfs_son_retention_days" gorm:"default:7"`
+	GFSFatherEnabled     bool   `json:"gfs_father_enabled" gorm:"default:true"`
+	GFSFatherRetentionWeeks int `json:"gfs_father_retention_weeks" gorm:"default:4"`
+	GFSGrandfatherEnabled bool   `json:"gfs_grandfather_enabled" gorm:"default:true"`
+	GFSGrandfatherRetentionMonths int `json:"gfs_grandfather_retention_months" gorm:"default:12"`
+}
+
+// GFSBackupLevel 标记备份所属的GFS层级
+type GFSBackupLevel string
+
+const (
+	GFSLevelSon        GFSBackupLevel = "son"
+	GFSLevelFather     GFSBackupLevel = "father"
+	GFSLevelGrandfather GFSBackupLevel = "grandfather"
+)
+
+// BackupGFSInfo 备份的GFS层级信息
+type BackupGFSInfo struct {
+	BackupID uint           `json:"backup_id"`
+	DatabaseID uint         `json:"database_id"`
+	Level    GFSBackupLevel `json:"level"`
+	BackupTime time.Time    `json:"backup_time"`
+	IsYearlyBackup bool     `json:"is_yearly_backup"`
+	IsMonthlyBackup bool    `json:"is_monthly_backup"`
+	IsWeeklyBackup bool     `json:"is_weekly_backup"`
 }
 
 // Task 任务模型

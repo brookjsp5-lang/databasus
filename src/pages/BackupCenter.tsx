@@ -1,65 +1,141 @@
+/**
+ * BackupCenter - 备份中心页面组件
+ * 
+ * @description 提供数据库备份的全面管理功能：
+ * - 数据库管理（MySQL、PostgreSQL）
+ * - 备份任务管理（创建、查看、删除）
+ * - 备份配置管理（排程、保留策略）
+ * - 实时备份进度跟踪（WebSocket）
+ * - 备份统计和状态监控
+ * 
+ * @module pages/BackupCenter
+ * @requires React
+ * @requires antd (Table, Button, Modal, Form等)
+ * @requires lucide-react (图标)
+ * @requires services/api (backupAPI, mysqlDatabaseAPI等)
+ * @requires hooks/useWebSocket (实时通信)
+ */
+
 import React, { useEffect, useState, useCallback } from 'react';
 import { Table, Button, Tag, Modal, Form, Input, Select, Switch, Popconfirm, Progress, message, Space, Card, Tabs, Alert, Tooltip, Row, Col } from 'antd';
 import { Database, HardDrive, Plus, Trash2, Loader, CheckCircle, XCircle, Clock, RefreshCw, Edit2, Play, Server, Folder, Archive, Bell, Mail, MessageSquare, TestTube } from 'lucide-react';
 import { backupAPI, mysqlDatabaseAPI, postgresqlDatabaseAPI, settingsAPI } from '../services/api';
 import { useWebSocket } from '../hooks/useWebSocket';
 
+/**
+ * 数据库记录接口
+ * @description 定义已注册的数据库信息
+ */
 interface DatabaseRecord {
+  /** 数据库ID */
   id: number;
+  /** 数据库名称 */
   name: string;
+  /** 数据库类型: mysql | postgresql */
   database_type: string;
+  /** 主机地址 */
   host: string;
+  /** 端口号 */
   port: number;
+  /** 连接用户名 */
   username: string;
+  /** 创建时间 */
   created_at: string;
 }
 
+/**
+ * 备份记录接口
+ * @description 定义备份任务的信息
+ */
 interface BackupRecord {
+  /** 备份ID */
   id: number;
+  /** 工作空间ID */
   workspace_id: number;
+  /** 关联的数据库ID */
   database_id: number;
+  /** 数据库类型 */
   database_type: string;
+  /** 备份类型: full | incremental | physical | logical */
   backup_type: string;
+  /** 备份状态 */
   status: string;
+  /** 备份文件路径 */
   file_path?: string;
+  /** 备份文件大小 (bytes) */
   file_size?: number;
+  /** 备份时间 */
   backup_time: string;
+  /** 创建时间 */
   created_at: string;
+  /** 备份进度 (%) */
   progress?: number;
+  /** 错误信息 */
   error_msg?: string;
 }
 
+/**
+ * 备份配置记录接口
+ * @description 定义备份配置的信息
+ */
 interface BackupConfigRecord {
+  /** 配置ID */
   id: number;
+  /** 工作空间ID */
   workspace_id: number;
+  /** 关联的数据库ID */
   database_id: number;
+  /** 数据库类型 */
   database_type: string;
+  /** 备份类型 */
   backup_type: string;
+  /** Cron表达式 */
   cron_expression: string;
+  /** 保留天数 */
   retention_days: number;
+  /** 是否启用 */
   is_enabled: boolean;
+  /** 创建时间 */
   created_at: string;
+  /** 更新时间 */
   updated_at: string;
 }
 
+/**
+ * 备份设置接口
+ * @description 定义备份的全局设置
+ */
 interface BackupSettings {
+  /** 备份存储路径 */
   backup_storage_path: string;
+  /** 备份保留天数 */
   backup_retention_days: number;
+  /** 是否启用压缩 */
   backup_compression_enabled: boolean;
 }
 
+/**
+ * 备份进度更新接口
+ * @description WebSocket实时推送的备份进度信息
+ */
 interface ProgressUpdate {
+  /** 备份ID */
   backup_id: number;
+  /** 备份状态 */
   status: string;
+  /** 备份进度 (%) */
   progress: number;
+  /** 状态消息 */
   message: string;
 }
 
+/** 数据库类型标签映射 */
 const databaseTypeLabels: Record<string, string> = {
   mysql: 'MySQL',
   postgresql: 'PostgreSQL',
 };
 
+/** 备份类型标签映射 */
 const backupTypeLabels: Record<string, string> = {
   full: '全量备份',
   incremental: '增量备份',
@@ -67,6 +143,7 @@ const backupTypeLabels: Record<string, string> = {
   logical: '逻辑备份',
 };
 
+/** 排程类型标签映射 */
 const scheduleTypeLabels: Record<string, string> = {
   hourly: '每小时',
   daily: '每天',
@@ -75,6 +152,12 @@ const scheduleTypeLabels: Record<string, string> = {
   cron: '自定义Cron',
 };
 
+/**
+ * 解析Cron表达式为可读描述
+ * @description 将Cron表达式转换为中文描述
+ * @param cron - Cron表达式
+ * @returns 中文描述字符串
+ */
 const getCronDescription = (cron: string): string => {
   const parts = cron.split(' ');
   if (parts.length !== 5) return cron;
@@ -86,17 +169,39 @@ const getCronDescription = (cron: string): string => {
   return cron;
 };
 
+/**
+ * BackupCenter 备份中心组件
+ * 
+ * @description 备份中心主组件，提供：
+ * - 数据库管理Tab（查看、添加、删除数据库）
+ * - 备份记录Tab（查看备份历史、手动备份、删除）
+ * - 备份配置Tab（查看配置、启用/禁用排程）
+ * - 实时进度跟踪（WebSocket连接）
+ * 
+ * @example
+ * ```tsx
+ * <BackupCenter />
+ * ```
+ */
 export const BackupCenter: React.FC = () => {
+  /** 当前激活的Tab */
   const [activeTab, setActiveTab] = useState('databases');
 
+  /** 数据库列表 */
   const [databases, setDatabases] = useState<DatabaseRecord[]>([]);
+  /** 数据库加载状态 */
   const [databasesLoading, setDatabasesLoading] = useState(false);
 
+  /** 备份列表 */
   const [backups, setBackups] = useState<BackupRecord[]>([]);
+  /** 备份加载状态 */
   const [backupsLoading, setBackupsLoading] = useState(false);
+  /** 备份进度映射 */
   const [backupProgressMap, setBackupProgressMap] = useState<Record<number, ProgressUpdate>>({});
 
+  /** 备份配置列表 */
   const [configs, setConfigs] = useState<BackupConfigRecord[]>([]);
+  /** 配置加载状态 */
   const [configsLoading, setConfigsLoading] = useState(false);
 
   const [backupSettings, setBackupSettings] = useState<BackupSettings>({

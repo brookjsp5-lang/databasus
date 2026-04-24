@@ -93,6 +93,10 @@ func SetupRoutes(router *gin.Engine, db *gorm.DB, redisClient *redis.Client, cfg
 		apiGroup.PUT("/storages/:id", storageHandler.Update)
 		apiGroup.DELETE("/storages/:id", storageHandler.Delete)
 
+		storageVerificationHandler := NewStorageVerificationHandler()
+		apiGroup.POST("/storages/test", storageVerificationHandler.TestStorage)
+		apiGroup.POST("/storages/info", storageVerificationHandler.GetStorageInfo)
+
 		backupHandler := NewBackupHandler(db)
 		apiGroup.GET("/backups", backupHandler.GetAll)
 		apiGroup.POST("/backups", backupHandler.Create)
@@ -116,6 +120,13 @@ func SetupRoutes(router *gin.Engine, db *gorm.DB, redisClient *redis.Client, cfg
 		apiGroup.GET("/backup-configs/:id", backupConfigHandler.GetByID)
 		apiGroup.PUT("/backup-configs/:id", backupConfigHandler.Update)
 		apiGroup.DELETE("/backup-configs/:id", backupConfigHandler.Delete)
+
+		retentionHandler := NewRetentionHandler(db)
+		apiGroup.GET("/retention/gfs/:config_id", retentionHandler.GetGFSConfig)
+		apiGroup.PUT("/retention/gfs", retentionHandler.UpdateGFSConfig)
+		apiGroup.POST("/retention/gfs/cleanup", retentionHandler.ExecuteGFSCleanup)
+		apiGroup.POST("/retention/gfs/preview", retentionHandler.PreviewGFSCleanup)
+		apiGroup.GET("/retention/backup/:backup_id/gfs-info", retentionHandler.GetBackupGFSInfo)
 
 		alertHandler := NewAlertHandler(db)
 		apiGroup.GET("/alerts", alertHandler.GetAll)

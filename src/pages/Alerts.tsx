@@ -1,47 +1,109 @@
+/**
+ * Alerts - 告警通知页面组件
+ * 
+ * @description 提供告警管理和通知配置功能：
+ * - 告警列表查看和筛选
+ * - 告警详情和标记已读
+ * - 告警规则配置
+ * - SMTP邮件配置
+ * - Webhook通知配置
+ * - 用户通知偏好设置
+ * 
+ * @module pages/Alerts
+ * @requires React
+ * @requires antd (Table, Button, Modal, Form, Tabs等)
+ * @requires lucide-react (图标)
+ * @requires services/api (settingsAPI)
+ */
+
 import React, { useEffect, useState } from 'react';
 import { Table, Button, Tag, message, Space, Card, Badge, Form, Input, Switch, Tabs, Select, Tooltip, Alert } from 'antd';
 import { Bell, Check, Trash2, Eye, AlertTriangle, AlertCircle, Info, CheckCircle, Mail, MessageSquare, Settings, Volume2, Send, Loader, Shield, Lock } from 'lucide-react';
 import { settingsAPI } from '../services/api';
 
+/**
+ * 告警记录接口
+ * @description 定义系统告警的信息
+ */
 interface Alert {
+  /** 告警ID */
   id: number;
+  /** 告警级别: info | warning | error | success */
   level: string;
+  /** 告警标题 */
   title: string;
+  /** 告警消息 */
   message: string;
+  /** 是否已读 */
   is_read: boolean;
+  /** 创建时间 */
   created_at: string;
 }
 
+/**
+ * SMTP配置接口
+ * @description 定义邮件发送配置
+ */
 interface SMTPConfig {
+  /** SMTP服务器地址 */
   host: string;
+  /** SMTP端口 */
   port: number;
+  /** 用户名 */
   username: string;
+  /** 密码 */
   password: string;
+  /** 加密类型: none | ssl | tls */
   encryption: string;
+  /** 发件人地址 */
   from_address: string;
+  /** 发件人名称 */
   from_name: string;
+  /** 是否启用 */
   is_enabled: boolean;
 }
 
+/**
+ * 告警设置接口
+ * @description 定义告警通知规则
+ */
 interface AlertSettings {
+  /** 是否启用邮件告警 */
   alert_email_enabled: boolean;
+  /** 告警接收邮箱 */
   alert_email: string;
+  /** 是否启用钉钉告警 */
   alert_dingtalk_enabled: boolean;
+  /** 钉钉Webhook地址 */
   alert_dingtalk_webhook: string;
+  /** 是否启用企业微信告警 */
   alert_wechat_enabled: boolean;
+  /** 企业微信Webhook地址 */
   alert_wechat_webhook: string;
+  /** 告警级别列表 */
   alert_levels: string[];
+  /** 告警频率 */
   alert_frequency: string;
 }
 
+/**
+ * 用户通知偏好接口
+ * @description 定义用户的通知偏好设置
+ */
 interface UserPreferences {
+  /** 是否启用邮件通知 */
   email_enabled: boolean;
+  /** 是否启用钉钉通知 */
   dingtalk_enabled: boolean;
+  /** 是否启用企业微信通知 */
   wechat_enabled: boolean;
+  /** 最低告警级别 */
   min_alert_level: string;
+  /** 告警频率 */
   alert_frequency: string;
 }
 
+/** 告警级别配置 */
 const alertLevelConfig: Record<string, { color: string; icon: React.ReactNode; label: string }> = {
   info: { color: 'blue', icon: <Info size={14} />, label: '信息' },
   warning: { color: 'gold', icon: <AlertTriangle size={14} />, label: '警告' },

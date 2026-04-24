@@ -1,3 +1,21 @@
+/**
+ * Restores - PITR恢复页面组件
+ * 
+ * @description 提供数据库时间点恢复（PITR）功能：
+ * - 恢复记录列表查看
+ * - 创建新的恢复任务
+ * - 选择备份和时间点
+ * - 实时恢复进度跟踪
+ * - 恢复历史记录
+ * 
+ * @module pages/Restores
+ * @requires React
+ * @requires antd (Table, Button, Modal等)
+ * @requires lucide-react (图标)
+ * @requires services/api (restoreAPI, backupAPI)
+ * @requires hooks/useWebSocket (实时通信)
+ */
+
 import React, { useEffect, useState, useCallback } from 'react';
 import { Table, Button, Tag, Modal, message, Select, DatePicker, Popconfirm, Progress, Alert, Space, Tooltip } from 'antd';
 import { RotateCcw, Clock, Loader, CheckCircle, XCircle, AlertTriangle, RefreshCw, Info, Ban, History } from 'lucide-react';
@@ -5,48 +23,108 @@ import dayjs, { Dayjs } from 'dayjs';
 import { restoreAPI, backupAPI } from '../services/api';
 import { useWebSocket } from '../hooks/useWebSocket';
 
+/**
+ * 恢复记录接口
+ * @description 定义数据库恢复任务的信息
+ */
 interface RestoreRecord {
+  /** 恢复记录ID */
   id: number;
+  /** 工作空间ID */
   workspace_id: number;
+  /** 数据库ID */
   database_id: number;
+  /** 数据库类型 */
   database_type: string;
+  /** 关联的备份ID */
   backup_id: number;
+  /** PITR时间点 */
   pitr_time?: string;
+  /** 恢复状态 */
   status: string;
+  /** 恢复进度 (%) */
   progress?: number;
+  /** 错误信息 */
   error_msg?: string;
+  /** 创建时间 */
   created_at: string;
 }
 
+/**
+ * 备份数据接口
+ * @description 定义可用于恢复的备份信息
+ */
 interface Backup {
+  /** 备份ID */
   id: number;
+  /** 数据库ID */
   database_id: number;
+  /** 数据库类型 */
   database_type: string;
+  /** 备份类型 */
   backup_type: string;
+  /** 备份状态 */
   status: string;
+  /** 备份文件路径 */
   file_path?: string;
+  /** 备份文件大小 */
   file_size?: number;
+  /** 备份时间 */
   backup_time: string;
+  /** 创建时间 */
   created_at: string;
 }
 
+/**
+ * 恢复进度更新接口
+ * @description WebSocket推送的恢复进度信息
+ */
 interface ProgressUpdate {
+  /** 恢复ID */
   restore_id: number;
+  /** 恢复状态 */
   status: string;
+  /** 恢复进度 (%) */
   progress: number;
+  /** 状态消息 */
   message: string;
 }
 
+/**
+ * PITR时间范围接口
+ * @description 定义可恢复的时间范围
+ */
 interface PITRTimeRange {
+  /** 最早可恢复时间 */
   min_time: string;
+  /** 最晚可恢复时间 */
   max_time: string;
+  /** 备份时间 */
   backup_time: string;
 }
 
+/**
+ * Restores PITR恢复组件
+ * 
+ * @description 提供数据库时间点恢复功能
+ * - 查看恢复历史记录
+ * - 创建新的恢复任务
+ * - 选择备份和时间点进行PITR
+ * - 实时跟踪恢复进度
+ * 
+ * @example
+ * ```tsx
+ * <Restores />
+ * ```
+ */
 export const Restores: React.FC = () => {
+  /** 恢复记录列表 */
   const [restores, setRestores] = useState<RestoreRecord[]>([]);
+  /** 可用备份列表 */
   const [backups, setBackups] = useState<Backup[]>([]);
+  /** 加载状态 */
   const [loading, setLoading] = useState(false);
+  /** 创建恢复模态框可见性 */
   const [createModalVisible, setCreateModalVisible] = useState(false);
   const [confirmModalVisible, setConfirmModalVisible] = useState(false);
   const [selectedBackup, setSelectedBackup] = useState<Backup | null>(null);

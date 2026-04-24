@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"time"
 )
 
@@ -38,6 +39,8 @@ type Storage interface {
 	Exists(ctx context.Context, key string) (bool, error)
 	List(ctx context.Context, prefix string) ([]string, error)
 	GetURL(ctx context.Context, key string) (string, error)
+	Test() error
+	GetStorageInfo() (map[string]interface{}, error)
 }
 
 func NewStorage(cfg StorageConfig) (Storage, error) {
@@ -149,6 +152,64 @@ func (s *LocalStorage) List(ctx context.Context, prefix string) ([]string, error
 func (s *LocalStorage) GetURL(ctx context.Context, key string) (string, error) {
 	absPath, _ := filepath.Abs(s.fullPath(key))
 	return fmt.Sprintf("file://%s", absPath), nil
+}
+
+func (s *LocalStorage) Test() error {
+	info, err := os.Stat(s.basePath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return fmt.Errorf("本地存储路径不存在: %s", s.basePath)
+		}
+		return fmt.Errorf("无法访问本地存储路径: %w", err)
+	}
+
+	if !info.IsDir() {
+		return fmt.Errorf("本地存储路径不是目录: %s", s.basePath)
+	}
+
+	if err := os.access(s.basePath, os.W_OK); err != nil {
+		return fmt.Errorf("本地存储路径没有写权限: %s", s.basePath)
+	}
+
+	return nil
+}
+
+func (s *LocalStorage) GetStorageInfo() (map[string]interface{}, error) {
+	info, err := os.Stat(s.basePath)
+	if err != nil {
+		return nil, err
+	}
+
+	diskUsage := &diskUsageInfo{}
+	if err := getDiskUsage(s.basePath, diskUsage); err != nil {
+		return nil, err
+	}
+
+	return map[string]interface{}{
+		"type":        "local",
+		"path":        s.basePath,
+		"writable":    true,
+		"total_space": diskUsage.Total,
+		"free_space":  diskUsage.Free,
+		"used_space":  diskUsage.Used,
+	}, nil
+}
+
+type diskUsageInfo struct {
+	Total uint64
+	Free  uint64
+	Used  uint64
+}
+
+func getDiskUsage(path string, usage *diskUsageInfo) error {
+	stat := &syscall.Statfs_t{}
+	if err := syscall.Statfs(path, stat); err != nil {
+		return err
+	}
+	usage.Total = stat.Bsize * int64(stat.Blocks)
+	usage.Free = stat.Bsize * int64(stat.Bfree)
+	usage.Used = usage.Total - usage.Free
+	return nil
 }
 
 type S3Storage struct {
@@ -338,6 +399,52 @@ func (s *S3Storage) GetURL(ctx context.Context, key string) (string, error) {
 	return s.buildURL(key), nil
 }
 
+func (s *S3Storage) Test() error {
+	if s.bucket == "" {
+		return fmt.Errorf("S3 Bucket名称不能为空")
+	}
+
+	if s.region == "" {
+		return fmt.Errorf("S3区域不能为空")
+	}
+
+	testURL := s.buildURL("datatrue-test-file.txt")
+	req, err := http.NewRequestWithContext(context.Background(), "HEAD", testURL, nil)
+	if err != nil {
+		return fmt.Errorf("无法创建S3测试请求: %w", err)
+	}
+
+	if s.accessKey != "" && s.secretKey != "" {
+		req.Header.Set("Authorization", fmt.Sprintf("AWS4-HMAC-SHA256 Credential=%s/%s", s.accessKey, s.region))
+	}
+
+	resp, err := s.client.Do(req)
+	if err != nil {
+		return fmt.Errorf("无法连接到S3存储: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode == 403 || resp.StatusCode == 401 {
+		return fmt.Errorf("S3认证失败，请检查Access Key和Secret Key")
+	}
+
+	if resp.StatusCode >= 400 && resp.StatusCode != 404 {
+		return fmt.Errorf("S3返回错误状态: %d", resp.StatusCode)
+	}
+
+	return nil
+}
+
+func (s *S3Storage) GetStorageInfo() (map[string]interface{}, error) {
+	return map[string]interface{}{
+		"type":    "s3",
+		"bucket":  s.bucket,
+		"region":  s.region,
+		"endpoint": s.endpoint,
+		"accessible": true,
+	}, nil
+}
+
 type NASStorage struct {
 	basePath string
 }
@@ -425,6 +532,51 @@ func (s *NASStorage) List(ctx context.Context, prefix string) ([]string, error) 
 
 func (s *NASStorage) GetURL(ctx context.Context, key string) (string, error) {
 	return fmt.Sprintf("smb://%s/%s", s.basePath, key), nil
+}
+
+func (s *NASStorage) Test() error {
+	if s.basePath == "" {
+		return fmt.Errorf("NAS路径不能为空")
+	}
+
+	info, err := os.Stat(s.basePath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return fmt.Errorf("NAS存储路径不存在或无法访问: %s", s.basePath)
+		}
+		return fmt.Errorf("无法访问NAS存储路径: %w", err)
+	}
+
+	if !info.IsDir() {
+		return fmt.Errorf("NAS路径不是目录: %s", s.basePath)
+	}
+
+	if err := os.access(s.basePath, os.W_OK); err != nil {
+		return fmt.Errorf("NAS存储路径没有写权限: %s", s.basePath)
+	}
+
+	return nil
+}
+
+func (s *NASStorage) GetStorageInfo() (map[string]interface{}, error) {
+	info, err := os.Stat(s.basePath)
+	if err != nil {
+		return nil, err
+	}
+
+	diskUsage := &diskUsageInfo{}
+	if err := getDiskUsage(s.basePath, diskUsage); err != nil {
+		return nil, err
+	}
+
+	return map[string]interface{}{
+		"type":        "nas",
+		"path":        s.basePath,
+		"writable":    true,
+		"total_space": diskUsage.Total,
+		"free_space":  diskUsage.Free,
+		"used_space":  diskUsage.Used,
+	}, nil
 }
 
 type BackupStorage struct {

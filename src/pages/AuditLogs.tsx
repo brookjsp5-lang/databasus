@@ -1,20 +1,48 @@
+/**
+ * AuditLogs - 审计日志页面组件
+ * 
+ * @description 提供系统审计日志功能：
+ * - 查看用户操作日志
+ * - 按时间和操作类型筛选
+ * - 操作详情查看
+ * - 导出审计日志
+ * 
+ * @module pages/AuditLogs
+ * @requires React
+ * @requires antd (Table, DatePicker, Select, Tag等)
+ * @requires lucide-react (图标)
+ */
+
 import React, { useEffect, useState } from 'react';
 import { Table, DatePicker, Select, Tag, Space, Card } from 'antd';
 import { User, Clock } from 'lucide-react';
 
 const { RangePicker } = DatePicker;
 
+/**
+ * 审计日志记录接口
+ * @description 定义用户操作的审计日志
+ */
 interface AuditLog {
+  /** 日志ID */
   id: number;
+  /** 用户ID */
   user_id: number;
+  /** 用户名 */
   username: string;
+  /** 操作类型 */
   action: string;
+  /** 资源类型 */
   resource: string;
+  /** 操作详情 */
   details: string;
+  /** IP地址 */
   ip_address: string;
+  /** 操作时间 */
   created_at: string;
 }
 
+/** 操作类型标签映射 */
 const actionLabels: Record<string, string> = {
   login: '登录',
   logout: '登出',
@@ -31,6 +59,7 @@ const actionLabels: Record<string, string> = {
   remove_member: '移除成员',
 };
 
+/** 操作类型颜色映射 */
 const actionColors: Record<string, string> = {
   login: 'green',
   logout: 'orange',
@@ -47,6 +76,12 @@ const actionColors: Record<string, string> = {
   remove_member: 'red',
 };
 
+/**
+ * 格式化日期时间
+ * @description 将ISO日期字符串转换为可读格式
+ * @param dateStr - ISO格式的日期字符串
+ * @returns 格式化后的日期时间字符串
+ */
 const formatDateTime = (dateStr: string): string => {
   const date = new Date(dateStr);
   const year = date.getFullYear();

@@ -1,53 +1,101 @@
+/**
+ * Dashboard - 仪表盘页面组件
+ * 
+ * @description 展示系统概览信息，包括：
+ * - 数据库统计（总数、备份数、成功率等）
+ * - 存储使用情况
+ * - 最近备份记录列表
+ * - 恢复统计
+ * 
+ * @module pages/Dashboard
+ * @requires React
+ * @requires antd (Row, Col, Table, Tag, Progress, Card)
+ * @requires lucide-react (图标)
+ * @requires services/api (statsAPI, backupAPI)
+ */
+
 import React, { useEffect, useState } from 'react';
 import { Row, Col, Table, Tag, Progress, Card } from 'antd';
 import { Database, HardDrive, CheckCircle, Server, TrendingUp, Clock } from 'lucide-react';
 import { statsAPI, backupAPI } from '../services/api';
 
+/**
+ * 统计数据接口
+ * @description 定义仪表盘统计数据结构
+ */
 interface StatsData {
+  /** 数据库总数 */
   total_databases: number;
+  /** 备份总数 */
   total_backups: number;
+  /** 备份成功率 (%) */
   success_rate: number;
+  /** 已使用存储空间 (GB) */
   storage_used: number;
+  /** 总存储空间 (GB) */
   storage_total: number;
+  /** 进行中的备份数 */
   active_backups: number;
+  /** 失败的备份数 */
   failed_backups: number;
+  /** 待处理的备份数 */
   pending_backups: number;
+  /** 最近备份数量 */
   recent_backups_count: number;
+  /** 恢复操作总数 */
   total_restores: number;
+  /** 成功的恢复数 */
   success_restores: number;
+  /** 失败的恢复数 */
   failed_restores: number;
 }
 
+/**
+ * 最近备份记录接口
+ * @description 定义备份记录数据结构
+ */
 interface RecentBackup {
+  /** 备份ID */
   id: number;
+  /** 数据库名称 */
   database: string;
+  /** 备份类型 */
   type: string;
+  /** 备份状态 */
   status: string;
+  /** 备份大小 */
   size: string;
+  /** 备份时间 */
   time: string;
 }
 
+/**
+ * Dashboard 仪表盘组件
+ * 
+ * @description 系统仪表盘主组件，展示关键业务指标和最近活动
+ * 
+ * @example
+ * ```tsx
+ * <Dashboard />
+ * ```
+ */
 export const Dashboard: React.FC = () => {
   const [stats, setStats] = useState<StatsData | null>(null);
   const [loading, setLoading] = useState(true);
   const [recentBackups, setRecentBackups] = useState<RecentBackup[]>([]);
 
+  /**
+   * 获取仪表盘数据
+   * @description 组件挂载时获取统计数据和备份列表
+   */
   useEffect(() => {
     fetchDashboardData();
   }, []);
 
-  const fetchDashboardData = async () => {
-    setLoading(true);
-    try {
-      const [statsData, backupsData] = await Promise.all([
-        statsAPI.getDashboardStats(1).catch(() => null),
-        backupAPI.getAll().catch(() => null)
-      ]);
-
-      if (statsData) {
-        setStats(statsData);
-      } else {
-        setStats({
+  /**
+   * 获取仪表盘数据
+   * @description 从API获取统计数据和备份列表，并处理加载状态
+   */
           total_databases: 0,
           total_backups: 0,
           success_rate: 0,

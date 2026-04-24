@@ -1,17 +1,50 @@
+/**
+ * Settings - 系统设置页面组件
+ * 
+ * @description 提供系统设置和用户配置功能：
+ * - 用户资料管理
+ * - 密码修改
+ * - SMTP邮件服务器配置
+ * - 告警规则配置
+ * - 备份策略配置
+ * - 系统信息查看
+ * 
+ * @module pages/Settings
+ * @requires React
+ * @requires antd (Card, Form, Input, Button, Switch, Tabs等)
+ * @requires lucide-react (图标)
+ * @requires services/api (settingsAPI, authAPI)
+ * @requires store (useAuthStore)
+ */
+
 import React, { useEffect, useState } from 'react';
 import { Card, Form, Input, Button, Switch, message, Tabs, Progress } from 'antd';
 import { User, Lock, Eye, EyeOff } from 'lucide-react';
 import { settingsAPI, authAPI } from '../services/api';
 import { useAuthStore } from '../store';
 
+/**
+ * 用户资料接口
+ * @description 定义用户的基本信息
+ */
 interface UserProfile {
+  /** 用户名 */
   username: string;
+  /** 邮箱 */
   email: string;
 }
 
+/** 密码强度标签 */
 const passwordStrengthLabels = ['弱', '中等', '强', '非常强'];
+/** 密码强度颜色 */
 const passwordStrengthColors = ['#ff4d4f', '#faad14', '#52c41a', '#13c41a'];
 
+/**
+ * 检查密码强度
+ * @description 根据密码复杂度计算强度分数
+ * @param password - 待检查的密码
+ * @returns 密码强度等级 (0-4)
+ */
 const checkPasswordStrength = (password: string): number => {
   let score = 0;
   if (password.length >= 8) score++;
@@ -22,15 +55,39 @@ const checkPasswordStrength = (password: string): number => {
   return Math.min(score, 4);
 };
 
+/**
+ * Settings 系统设置组件
+ * 
+ * @description 提供系统设置和用户配置功能
+ * - Tab: 用户资料（修改用户名、邮箱）
+ * - Tab: 密码修改（修改密码）
+ * - Tab: SMTP配置（邮件服务器设置）
+ * - Tab: 告警规则（告警阈值设置）
+ * - Tab: 备份策略（全局备份设置）
+ * 
+ * @example
+ * ```tsx
+ * <Settings />
+ * ```
+ */
 export const Settings: React.FC = () => {
+  /** 从Auth store获取用户信息 */
   const { user, setUser } = useAuthStore();
+  /** 保存按钮加载状态 */
   const [loading, setLoading] = useState(false);
+  /** 用户资料表单 */
   const [profileForm] = Form.useForm();
+  /** 密码表单 */
   const [passwordForm] = Form.useForm();
+  /** 是否显示当前密码 */
   const [showCurrentPassword, setShowCurrentPassword] = useState(false);
+  /** 是否显示新密码 */
   const [showNewPassword, setShowNewPassword] = useState(false);
+  /** 是否显示确认密码 */
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
+  /** 密码强度等级 */
   const [passwordStrength, setPasswordStrength] = useState(0);
+  /** 新密码值 */
   const [newPassword, setNewPassword] = useState('');
 
   useEffect(() => {

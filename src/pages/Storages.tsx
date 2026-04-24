@@ -1,53 +1,84 @@
+/**
+ * Storages - 存储管理页面组件
+ * 
+ * @description 提供存储配置管理功能：
+ * - 查看存储列表
+ * - 添加存储配置（本地、S3、NAS）
+ * - 编辑存储配置
+ * - 删除存储配置
+ * - 存储使用统计
+ * 
+ * @module pages/Storages
+ * @requires React
+ * @requires antd (Table, Button, Modal, Form等)
+ * @requires lucide-react (图标)
+ */
+
 import React, { useEffect, useState } from 'react';
 import { Table, Button, Modal, Form, Input, Select, Tag, message, Popconfirm, Space, Card } from 'antd';
 import { Plus, Edit2, Trash2, HardDrive, Database } from 'lucide-react';
 
+/**
+ * 存储配置接口
+ * @description 定义存储配置的信息
+ */
 interface Storage {
+  /** 存储配置ID */
   id: number;
+  /** 存储名称 */
   name: string;
+  /** 存储类型: local | s3 | nas */
   type: string;
+  /** 存储配置详情 */
   config: any;
+  /** 创建时间 */
   created_at: string;
+  /** 更新时间 */
   updated_at: string;
 }
 
+/** 存储类型标签映射 */
 const storageTypeLabels: Record<string, string> = {
   local: '本地存储',
   s3: 'S3兼容存储',
   nas: 'NAS存储',
 };
 
+/** 存储类型颜色映射 */
 const storageTypeColors: Record<string, string> = {
   local: 'green',
   s3: 'blue',
   nas: 'purple',
 };
 
+/**
+ * Storages 存储管理组件
+ * 
+ * @description 提供存储配置管理功能
+ * - 查看所有存储配置
+ * - 添加新存储（本地/S3/NAS）
+ * - 编辑存储配置
+ * - 删除存储配置
+ * 
+ * @example
+ * ```tsx
+ * <Storages />
+ * ```
+ */
 export const Storages: React.FC = () => {
+  /** 存储列表 */
   const [storages, setStorages] = useState<Storage[]>([]);
+  /** 加载状态 */
   const [loading, setLoading] = useState(true);
+  /** 模态框可见性 */
   const [modalOpen, setModalOpen] = useState(false);
+  /** 编辑中的存储 */
   const [editingStorage, setEditingStorage] = useState<Storage | null>(null);
+  /** 表单实例 */
   const [form] = Form.useForm();
 
-  useEffect(() => {
-    fetchStorages();
-  }, []);
-
+  /** 获取存储列表 */
   const fetchStorages = async () => {
-    setLoading(true);
-    try {
-      const response = await fetch('http://localhost:6001/api/storages', {
-        headers: {
-          'Authorization': `Bearer ${localStorage.getItem('token')}`,
-          'Content-Type': 'application/json'
-        }
-      });
-      if (response.ok) {
-        const data = await response.json();
-        setStorages(data.storages || []);
-      }
-    } catch (error) {
       console.error('Failed to fetch storages:', error);
       message.error('获取存储列表失败');
     } finally {

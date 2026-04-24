@@ -1,3 +1,20 @@
+/**
+ * AuthPage - 用户认证页面组件
+ * 
+ * @description 提供用户登录和注册功能：
+ * - 登录表单（邮箱+密码）
+ * - 注册表单（用户名+邮箱+密码）
+ * - 表单验证和数据提交
+ * - 登录状态管理和Token存储
+ * 
+ * @module pages/AuthPage
+ * @requires React
+ * @requires antd (Form, Input, Button, Typography, Tabs, message)
+ * @requires lucide-react (图标)
+ * @requires services/api (authAPI)
+ * @requires store (useAuthStore)
+ */
+
 import React, { useState } from 'react';
 import { Form, Input, Button, Typography, message, Tabs } from 'antd';
 import { Mail, Lock, User, AlertCircle } from 'lucide-react';
@@ -6,12 +23,57 @@ import { useAuthStore } from '../store';
 
 const { Title, Text, Paragraph } = Typography;
 
+/**
+ * 登录表单数据接口
+ * @description 定义登录表单的数据结构
+ */
+interface LoginFormValues {
+  /** 用户邮箱 */
+  email: string;
+  /** 用户密码 */
+  password: string;
+}
+
+/**
+ * 注册表单数据接口
+ * @description 定义注册表单的数据结构
+ */
+interface RegisterFormValues {
+  /** 用户名 */
+  username: string;
+  /** 用户邮箱 */
+  email: string;
+  /** 用户密码 */
+  password: string;
+}
+
+/**
+ * AuthPage 认证页面组件
+ * 
+ * @description 用户认证主组件，提供登录和注册功能
+ * - 支持Tab切换登录/注册表单
+ * - 表单验证和错误提示
+ * - 登录成功后自动跳转仪表盘
+ * 
+ * @example
+ * ```tsx
+ * <AuthPage />
+ * ```
+ */
 export const AuthPage: React.FC = () => {
+  /** 当前激活的Tab: 'login' | 'register' */
   const [activeTab, setActiveTab] = useState('login');
+  /** 提交按钮加载状态 */
   const [loading, setLoading] = useState(false);
+  /** Auth store，用于存储用户状态 */
   const { setUser, setToken } = useAuthStore();
 
-  const handleLogin = async (values: { email: string; password: string }) => {
+  /**
+   * 处理用户登录
+   * @description 验证表单数据，调用登录API，成功后存储Token并跳转
+   * @param values - 表单数据（邮箱、密码）
+   */
+  const handleLogin = async (values: LoginFormValues) => {
     setLoading(true);
     try {
       const response = await authAPI.login(values);
@@ -28,7 +90,12 @@ export const AuthPage: React.FC = () => {
     }
   };
 
-  const handleRegister = async (values: { username: string; email: string; password: string }) => {
+  /**
+   * 处理用户注册
+   * @description 验证表单数据，调用注册API，成功后存储Token并跳转
+   * @param values - 表单数据（用户名、邮箱、密码）
+   */
+  const handleRegister = async (values: RegisterFormValues) => {
     setLoading(true);
     try {
       const response = await authAPI.register(values);

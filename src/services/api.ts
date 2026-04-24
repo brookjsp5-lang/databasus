@@ -1,7 +1,23 @@
+/**
+ * API服务层
+ * 
+ * @description 封装所有与后端的HTTP通信，包括：
+ * - 用户认证（登录、注册、登出）
+ * - 数据库管理（MySQL、PostgreSQL）
+ * - 备份操作（创建、查询、删除）
+ * - 存储配置（S3、本地、NFS）
+ * - 系统设置（SMTP、告警等）
+ * - GFS保留策略
+ * 
+ * @module services/api
+ */
+
 import axios from 'axios';
 
+/** API基础URL，优先使用环境变量，否则使用本地开发服务器 */
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:6001';
 
+/** 创建axios实例 */
 const api = axios.create({
   baseURL: API_URL,
   headers: {
@@ -9,7 +25,10 @@ const api = axios.create({
   },
 });
 
-// 请求拦截器
+/**
+ * 请求拦截器
+ * @description 自动添加JWT token到请求头
+ */
 api.interceptors.request.use(
   (config) => {
     const token = localStorage.getItem('token');
@@ -23,7 +42,10 @@ api.interceptors.request.use(
   }
 );
 
-// 响应拦截器
+/**
+ * 响应拦截器
+ * @description 处理401未授权响应，自动清除登录状态并跳转登录页
+ */
 api.interceptors.response.use(
   (response) => {
     return response.data;
@@ -38,14 +60,22 @@ api.interceptors.response.use(
   }
 );
 
-// 类型定义
+/**
+ * 用户数据类型
+ * @description 定义用户基本信息
+ */
 export interface User {
+  /** 用户ID */
   id: number;
+  /** 用户名 */
   username: string;
+  /** 邮箱 */
   email: string;
+  /** 是否管理员 */
   is_admin: boolean;
 }
 
+/** 认证响应类型 */
 export interface AuthResponse {
   message: string;
   token: string;
@@ -179,6 +209,26 @@ export const storageAPI = {
   getById: (id: number): Promise<{ storage: any }> => api.get(`/api/storages/${id}`),
   update: (id: number, data: any): Promise<{ storage: any }> => api.put(`/api/storages/${id}`, data),
   delete: (id: number): Promise<{ message: string }> => api.delete(`/api/storages/${id}`),
+  test: (data: {
+    type: string;
+    local_path?: string;
+    s3_bucket?: string;
+    s3_region?: string;
+    s3_endpoint?: string;
+    s3_access_key?: string;
+    s3_secret_key?: string;
+    nas_path?: string;
+  }): Promise<{ success: boolean; message: string; info?: any }> => api.post('/api/storages/test', data),
+  getInfo: (data: {
+    type: string;
+    local_path?: string;
+    s3_bucket?: string;
+    s3_region?: string;
+    s3_endpoint?: string;
+    s3_access_key?: string;
+    s3_secret_key?: string;
+    nas_path?: string;
+  }): Promise<{ info: any }> => api.post('/api/storages/info', data),
 };
 
 // 备份相关
@@ -221,6 +271,46 @@ export const backupConfigAPI = {
   delete: (id: number): Promise<{ message: string }> => api.delete(`/api/backup-configs/${id}`),
 };
 
+// GFS保留策略相关
+export interface GFSConfig {
+  gfs_tier_enabled: boolean;
+  gfs_son_enabled: boolean;
+  gfs_son_retention_days: number;
+  gfs_father_enabled: boolean;
+  gfs_father_retention_weeks: number;
+  gfs_grandfather_enabled: boolean;
+  gfs_grandfather_retention_months: number;
+}
+
+export interface GFSCleanupPreview {
+  id: number;
+  backup_time: string;
+  level: string;
+  will_delete: boolean;
+  reason: string;
+}
+
+export const retentionAPI = {
+  getGFSConfig: (configId: number): Promise<{ config: GFSConfig }> => 
+    api.get(`/api/retention/gfs/${configId}`),
+  updateGFSConfig: (data: {
+    config_id: number;
+    son_enabled: boolean;
+    son_days: number;
+    father_enabled: boolean;
+    father_weeks: number;
+    grandfather_enabled: boolean;
+    grandfather_months: number;
+  }): Promise<{ message: string; config: any }> => 
+    api.put('/api/retention/gfs', data),
+  executeCleanup: (configId: number): Promise<{ message: string; result: any }> =>
+    api.post('/api/retention/gfs/cleanup', { config_id: configId }),
+  previewCleanup: (configId: number): Promise<{ previews: GFSCleanupPreview[]; total_backups: number; will_delete: number }> =>
+    api.post('/api/retention/gfs/preview', { config_id: configId }),
+  getBackupGFSInfo: (backupId: number): Promise<{ gfs_info: any }> =>
+    api.get(`/api/retention/backup/${backupId}/gfs-info`),
+};
+
 // 告警相关
 export const alertAPI = {
   getAll: (params?: { workspace_id?: number; level?: string; is_read?: boolean }): Promise<{ alerts: any[] }> => 
@@ -235,6 +325,17 @@ export const alertAPI = {
 };
 
 // 设置相关
+export interface SMTPConfig {
+  host: string;
+  port: number;
+  username: string;
+  password?: string;
+  encryption: string;
+  from_address: string;
+  from_name: string;
+  is_enabled: boolean;
+}
+
 export const settingsAPI = {
   getAll: (): Promise<{ settings: any[] }> => api.get('/api/settings'),
   getByKey: (key: string): Promise<{ key: string; value: string }> => api.get(`/api/settings/${key}`),
@@ -245,6 +346,12 @@ export const settingsAPI = {
   setAlertSettings: (data: any): Promise<{ message: string }> => api.post('/api/settings/alert', data),
   getBackupSettings: (): Promise<any> => api.get('/api/settings/backup'),
   setBackupSettings: (data: any): Promise<{ message: string }> => api.post('/api/settings/backup', data),
+  getSMTPConfig: (): Promise<{ smtp_config: SMTPConfig }> => api.get('/api/settings/smtp'),
+  saveSMTPConfig: (data: SMTPConfig): Promise<{ message: string }> => api.post('/api/settings/smtp', data),
+  testSMTPConnection: (data: SMTPConfig): Promise<{ message: string; success: boolean }> => 
+    api.post('/api/settings/smtp/test', data),
+  testSendEmail: (toAddress: string): Promise<{ message: string; success: boolean }> =>
+    api.post('/api/settings/smtp/test-email', { to_address: toAddress }),
 };
 
 export default api;

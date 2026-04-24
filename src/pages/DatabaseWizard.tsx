@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Form, Input, Select, Switch, Button, Steps, Alert, Space, Tag, Divider, InputNumber, DatePicker, message, Card, Radio, Tooltip, Popconfirm } from 'antd';
 import { Plus, Database as DatabaseIcon, Clock, HardDrive, Bell, Save, CheckCircle, XCircle, Wifi, WifiOff, Loader, Info, AlertTriangle } from 'lucide-react';
-import { mysqlDatabaseAPI, postgresqlDatabaseAPI, backupConfigAPI, storageAPI } from '../services/api';
+import { mysqlDatabaseAPI, postgresqlDatabaseAPI, backupConfigAPI, storageAPI, settingsAPI } from '../services/api';
 import dayjs from 'dayjs';
 
 interface DatabaseWizardProps {
@@ -69,6 +69,16 @@ interface BackupConfigFormData {
   encryption_key?: string;
 }
 
+interface GFSFormData {
+  gfs_tier_enabled: boolean;
+  gfs_son_enabled: boolean;
+  gfs_son_retention_days: number;
+  gfs_father_enabled: boolean;
+  gfs_father_retention_weeks: number;
+  gfs_grandfather_enabled: boolean;
+  gfs_grandfather_retention_months: number;
+}
+
 const STEPS = [
   { title: '数据库类型', icon: <DatabaseIcon size={16} /> },
   { title: '连接设置', icon: <Wifi size={16} /> },
@@ -99,6 +109,7 @@ export const DatabaseWizard: React.FC<DatabaseWizardProps> = ({ onComplete, onCa
   const [retentionForm] = Form.useForm<RetentionFormData>();
   const [notificationForm] = Form.useForm<NotificationFormData>();
   const [backupConfigForm] = Form.useForm<BackupConfigFormData>();
+  const [gfsForm] = Form.useForm<GFSFormData>();
 
   const [storages, setStorages] = useState<any[]>([]);
 
@@ -122,6 +133,15 @@ export const DatabaseWizard: React.FC<DatabaseWizardProps> = ({ onComplete, onCa
     notificationForm.setFieldsValue({
       notify_on_success: true,
       notify_on_failure: true,
+    });
+    gfsForm.setFieldsValue({
+      gfs_tier_enabled: false,
+      gfs_son_enabled: true,
+      gfs_son_retention_days: 7,
+      gfs_father_enabled: true,
+      gfs_father_retention_weeks: 4,
+      gfs_grandfather_enabled: true,
+      gfs_grandfather_retention_months: 12,
     });
   }, []);
 
@@ -180,34 +200,37 @@ export const DatabaseWizard: React.FC<DatabaseWizardProps> = ({ onComplete, onCa
     try {
       const values = storageForm.getFieldsValue();
 
+      let testData: any = {
+        type: values.storage_type,
+      };
+
       if (values.storage_type === 'local') {
-        if (!values.local_path) {
-          message.error('请输入本地存储路径');
-          setStorageStatus('failed');
-          return;
-        }
-        message.success('本地存储路径验证成功');
-        setStorageStatus('success');
+        testData.local_path = values.local_path;
       } else if (values.storage_type === 's3') {
-        if (!values.s3_bucket || !values.s3_region) {
-          message.error('请填写S3配置信息');
-          setStorageStatus('failed');
-          return;
-        }
-        message.success('S3存储配置验证成功');
-        setStorageStatus('success');
+        testData.s3_bucket = values.s3_bucket;
+        testData.s3_region = values.s3_region;
+        testData.s3_endpoint = values.s3_endpoint;
+        testData.s3_access_key = values.s3_access_key;
+        testData.s3_secret_key = values.s3_secret_key;
       } else if (values.storage_type === 'nas') {
-        if (!values.nas_path) {
-          message.error('请输入NAS路径');
-          setStorageStatus('failed');
-          return;
-        }
-        message.success('NAS存储配置验证成功');
-        setStorageStatus('success');
+        testData.nas_path = values.nas_path;
       }
-    } catch (error) {
+
+      const response = await storageAPI.test(testData);
+
+      if (response.success) {
+        setStorageStatus('success');
+        message.success(response.message);
+        if (response.info) {
+          console.log('存储信息:', response.info);
+        }
+      } else {
+        setStorageStatus('failed');
+        message.error(response.message);
+      }
+    } catch (error: any) {
       setStorageStatus('failed');
-      message.error('存储验证失败');
+      message.error(error.response?.data?.error || '存储验证失败');
     } finally {
       setTestingStorage(false);
     }
@@ -220,19 +243,32 @@ export const DatabaseWizard: React.FC<DatabaseWizardProps> = ({ onComplete, onCa
       const values = notificationForm.getFieldsValue();
 
       if (values.webhook_enabled && values.webhook_url) {
-        await fetch(values.webhook_url, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            msgtype: 'text',
-            text: { content: 'DataTrue 通知测试消息' }
-          })
-        });
-        message.success('Webhook通知测试成功！');
+        try {
+          await fetch(values.webhook_url, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              msgtype: 'text',
+              text: { content: 'DataTrue 通知测试消息' }
+            })
+          });
+          message.success('Webhook通知测试成功！');
+        } catch (webhookError) {
+          message.warning('Webhook通知发送失败，但已记录配置');
+        }
       } else if (values.email_enabled && values.email) {
-        message.info('邮件通知已配置（实际发送需要SMTP服务器）');
+        try {
+          const response = await settingsAPI.testSendEmail(values.email);
+          if (response.success) {
+            message.success('测试邮件已发送到 ' + values.email);
+          } else {
+            message.error('邮件发送失败: ' + response.message);
+          }
+        } catch (emailError: any) {
+          message.error('邮件发送测试失败: ' + (emailError.response?.data?.error || '请检查SMTP配置'));
+        }
       } else {
-        message.warning('请先启用并配置通知渠道');
+        message.warning('请先启用并配置至少一种通知渠道');
       }
     } catch (error) {
       message.error('通知测试失败');
@@ -277,6 +313,7 @@ export const DatabaseWizard: React.FC<DatabaseWizardProps> = ({ onComplete, onCa
       const retValues = retentionForm.getFieldsValue();
       const notifValues = notificationForm.getFieldsValue();
       const backupValues = backupConfigForm.getFieldsValue();
+      const gfsValues = gfsForm.getFieldsValue();
 
       let databaseId: number;
 
@@ -352,7 +389,7 @@ export const DatabaseWizard: React.FC<DatabaseWizardProps> = ({ onComplete, onCa
         schedule_type: schedValues.schedule_type,
         cron_expression: scheduleCron,
         backup_type: backupValues.backup_type,
-        retention_type: retValues.retention_type,
+        retention_type: gfsValues.gfs_tier_enabled ? 'gfs' : retValues.retention_type,
         retention_days: retValues.retention_days,
         retention_count: retValues.retention_count,
         compress: backupValues.compress,
@@ -366,6 +403,13 @@ export const DatabaseWizard: React.FC<DatabaseWizardProps> = ({ onComplete, onCa
         notify_on_success: notifValues.notify_on_success,
         notify_on_failure: notifValues.notify_on_failure,
         enabled: schedValues.enabled,
+        gfs_tier_enabled: gfsValues.gfs_tier_enabled,
+        gfs_son_enabled: gfsValues.gfs_son_enabled,
+        gfs_son_retention_days: gfsValues.gfs_son_retention_days,
+        gfs_father_enabled: gfsValues.gfs_father_enabled,
+        gfs_father_retention_weeks: gfsValues.gfs_father_retention_weeks,
+        gfs_grandfather_enabled: gfsValues.gfs_grandfather_enabled,
+        gfs_grandfather_retention_months: gfsValues.gfs_grandfather_retention_months,
       };
 
       await backupConfigAPI.create(backupConfigPayload);
@@ -831,71 +875,204 @@ export const DatabaseWizard: React.FC<DatabaseWizardProps> = ({ onComplete, onCa
         <h3 className="step-title">保留策略配置</h3>
         <p className="step-description">设置备份文件的保留规则</p>
 
-        <Form.Item name="retention_type" label="保留方式" rules={[{ required: true }]}>
-          <Radio.Group>
-            <Radio value="time">
-              <div className="retention-option">
-                <span className="retention-name">按时间保留</span>
-                <span className="retention-desc">保留一定天数内的备份</span>
-              </div>
-            </Radio>
-            <Radio value="count">
-              <div className="retention-option">
-                <span className="retention-name">按数量保留</span>
-                <span className="retention-desc">保留最近一定数量的备份</span>
-              </div>
-            </Radio>
-          </Radio.Group>
-        </Form.Item>
+        <Form form={gfsForm}>
+          <Form.Item name="gfs_tier_enabled" label="启用GFS层级保留" valuePropName="checked">
+            <Switch />
+          </Form.Item>
 
-        <Form.Item
-          noStyle
-          shouldUpdate={(prev, curr) => prev.retention_type !== curr.retention_type}
-        >
-          {({ getFieldValue }) => {
-            const retentionType = getFieldValue('retention_type');
+          <Form.Item
+            noStyle
+            shouldUpdate={(prev, curr) => prev.gfs_tier_enabled !== curr.gfs_tier_enabled}
+          >
+            {({ getFieldValue }) => {
+              const gfsEnabled = getFieldValue('gfs_tier_enabled');
 
-            if (retentionType === 'time') {
+              if (!gfsEnabled) {
+                return (
+                  <>
+                    <Form.Item name="retention_type" label="基础保留方式" rules={[{ required: true }]}>
+                      <Radio.Group>
+                        <Radio value="time">
+                          <div className="retention-option">
+                            <span className="retention-name">按时间保留</span>
+                            <span className="retention-desc">保留一定天数内的备份</span>
+                          </div>
+                        </Radio>
+                        <Radio value="count">
+                          <div className="retention-option">
+                            <span className="retention-name">按数量保留</span>
+                            <span className="retention-desc">保留最近一定数量的备份</span>
+                          </div>
+                        </Radio>
+                      </Radio.Group>
+                    </Form.Item>
+
+                    <Form.Item
+                      noStyle
+                      shouldUpdate={(prev, curr) => prev.retention_type !== curr.retention_type}
+                    >
+                      {({ getFieldValue: getRetentionFieldValue }) => {
+                        const retentionType = getRetentionFieldValue('retention_type');
+
+                        if (retentionType === 'time') {
+                          return (
+                            <Form.Item
+                              name="retention_days"
+                              label="保留天数"
+                              rules={[{ required: true, message: '请输入保留天数' }]}
+                            >
+                              <Select placeholder="选择保留天数">
+                                <Select.Option value={7}>7 天</Select.Option>
+                                <Select.Option value={14}>14 天</Select.Option>
+                                <Select.Option value={30}>30 天</Select.Option>
+                                <Select.Option value={60}>60 天</Select.Option>
+                                <Select.Option value={90}>90 天</Select.Option>
+                                <Select.Option value={180}>180 天</Select.Option>
+                                <Select.Option value={365}>1 年</Select.Option>
+                              </Select>
+                            </Form.Item>
+                          );
+                        }
+
+                        if (retentionType === 'count') {
+                          return (
+                            <Form.Item
+                              name="retention_count"
+                              label="保留数量"
+                              rules={[{ required: true, message: '请输入保留数量' }]}
+                            >
+                              <Select placeholder="选择保留数量">
+                                <Select.Option value={10}>10 个备份</Select.Option>
+                                <Select.Option value={20}>20 个备份</Select.Option>
+                                <Select.Option value={30}>30 个备份</Select.Option>
+                                <Select.Option value={50}>50 个备份</Select.Option>
+                                <Select.Option value={100}>100 个备份</Select.Option>
+                              </Select>
+                            </Form.Item>
+                          );
+                        }
+
+                        return null;
+                      }}
+                    </Form.Item>
+                  </>
+                );
+              }
+
               return (
-                <Form.Item
-                  name="retention_days"
-                  label="保留天数"
-                  rules={[{ required: true, message: '请输入保留天数' }]}
-                >
-                  <Select placeholder="选择保留天数">
-                    <Select.Option value={7}>7 天</Select.Option>
-                    <Select.Option value={14}>14 天</Select.Option>
-                    <Select.Option value={30}>30 天</Select.Option>
-                    <Select.Option value={60}>60 天</Select.Option>
-                    <Select.Option value={90}>90 天</Select.Option>
-                    <Select.Option value={180}>180 天</Select.Option>
-                    <Select.Option value={365}>1 年</Select.Option>
-                  </Select>
-                </Form.Item>
-              );
-            }
+                <>
+                  <Alert
+                    message="GFS 层级保留策略"
+                    description={
+                      <div className="gfs-info">
+                        <p><strong>Son (儿子层)</strong>: 日/周备份 - 保留最近N天</p>
+                        <p><strong>Father (父亲层)</strong>: 月度备份 - 保留最近N周</p>
+                        <p><strong>Grandfather (祖父层)</strong>: 年度备份 - 保留最近N个月</p>
+                      </div>
+                    }
+                    type="info"
+                    showIcon
+                    className="mb-4"
+                  />
 
-            if (retentionType === 'count') {
-              return (
-                <Form.Item
-                  name="retention_count"
-                  label="保留数量"
-                  rules={[{ required: true, message: '请输入保留数量' }]}
-                >
-                  <Select placeholder="选择保留数量">
-                    <Select.Option value={10}>10 个备份</Select.Option>
-                    <Select.Option value={20}>20 个备份</Select.Option>
-                    <Select.Option value={30}>30 个备份</Select.Option>
-                    <Select.Option value={50}>50 个备份</Select.Option>
-                    <Select.Option value={100}>100 个备份</Select.Option>
-                  </Select>
-                </Form.Item>
-              );
-            }
+                  <div className="gfs-tiers">
+                    <div className="gfs-tier son-tier">
+                      <div className="gfs-tier-header">
+                        <Tag color="blue">Son</Tag>
+                        <span>日/周备份保留</span>
+                      </div>
+                      <Form.Item name="gfs_son_enabled" valuePropName="checked" className="mb-2">
+                        <Switch checkedChildren="启用" unCheckedChildren="禁用" />
+                      </Form.Item>
+                      <Form.Item
+                        noStyle
+                        shouldUpdate={(prev, curr) => prev.gfs_son_enabled !== curr.gfs_son_enabled}
+                      >
+                        {({ getFieldValue }) => getFieldValue('gfs_son_enabled') && (
+                          <Form.Item name="gfs_son_retention_days" label="保留天数">
+                            <Select>
+                              <Select.Option value={7}>7 天</Select.Option>
+                              <Select.Option value={14}>14 天</Select.Option>
+                              <Select.Option value={21}>21 天</Select.Option>
+                              <Select.Option value={30}>30 天</Select.Option>
+                              <Select.Option value={60}>60 天</Select.Option>
+                            </Select>
+                          </Form.Item>
+                        )}
+                      </Form.Item>
+                    </div>
 
-            return null;
-          }}
-        </Form.Item>
+                    <div className="gfs-tier father-tier">
+                      <div className="gfs-tier-header">
+                        <Tag color="green">Father</Tag>
+                        <span>月度备份保留</span>
+                      </div>
+                      <Form.Item name="gfs_father_enabled" valuePropName="checked" className="mb-2">
+                        <Switch checkedChildren="启用" unCheckedChildren="禁用" />
+                      </Form.Item>
+                      <Form.Item
+                        noStyle
+                        shouldUpdate={(prev, curr) => prev.gfs_father_enabled !== curr.gfs_father_enabled}
+                      >
+                        {({ getFieldValue }) => getFieldValue('gfs_father_enabled') && (
+                          <Form.Item name="gfs_father_retention_weeks" label="保留周数">
+                            <Select>
+                              <Select.Option value={4}>4 周 (1个月)</Select.Option>
+                              <Select.Option value={8}>8 周 (2个月)</Select.Option>
+                              <Select.Option value={12}>12 周 (3个月)</Select.Option>
+                              <Select.Option value={24}>24 周 (6个月)</Select.Option>
+                              <Select.Option value={52}>52 周 (1年)</Select.Option>
+                            </Select>
+                          </Form.Item>
+                        )}
+                      </Form.Item>
+                    </div>
+
+                    <div className="gfs-tier grandfather-tier">
+                      <div className="gfs-tier-header">
+                        <Tag color="orange">Grandfather</Tag>
+                        <span>年度备份保留</span>
+                      </div>
+                      <Form.Item name="gfs_grandfather_enabled" valuePropName="checked" className="mb-2">
+                        <Switch checkedChildren="启用" unCheckedChildren="禁用" />
+                      </Form.Item>
+                      <Form.Item
+                        noStyle
+                        shouldUpdate={(prev, curr) => prev.gfs_grandfather_enabled !== curr.gfs_grandfather_enabled}
+                      >
+                        {({ getFieldValue }) => getFieldValue('gfs_grandfather_enabled') && (
+                          <Form.Item name="gfs_grandfather_retention_months" label="保留月数">
+                            <Select>
+                              <Select.Option value={12}>12 个月 (1年)</Select.Option>
+                              <Select.Option value={24}>24 个月 (2年)</Select.Option>
+                              <Select.Option value={36}>36 个月 (3年)</Select.Option>
+                              <Select.Option value={60}>60 个月 (5年)</Select.Option>
+                              <Select.Option value={120}>120 个月 (10年)</Select.Option>
+                            </Select>
+                          </Form.Item>
+                        )}
+                      </Form.Item>
+                    </div>
+                  </div>
+
+                  <Alert
+                    message="GFS保留规则"
+                    description={
+                      <ul className="gfs-rules">
+                        <li>Son层: 每月第一周的周一备份将被标记为月度备份</li>
+                        <li>Father层: 每年1月1日的备份将被标记为年度备份</li>
+                        <li>系统将根据层级自动判断并应用相应的保留策略</li>
+                      </ul>
+                    }
+                    type="warning"
+                    showIcon
+                    className="mt-4"
+                  />
+                </>
+              );
+            }}
+          </Form.Item>
+        </Form>
 
         <Divider />
 
@@ -908,14 +1085,6 @@ export const DatabaseWizard: React.FC<DatabaseWizardProps> = ({ onComplete, onCa
         <Form.Item name="total_storage_limit" label="总存储大小限制 (GB)">
           <InputNumber min={0} placeholder="0 表示不限制" style={{ width: '100%' }} />
         </Form.Item>
-
-        <Alert
-          message="GFS保留策略提示"
-          description="如需配置更复杂的层级保留策略（如每小时、每天、每周、每月的备份独立保留），请在高级设置中配置。"
-          type="info"
-          showIcon
-          className="mt-4"
-        />
       </div>
     </Card>
   );
@@ -1274,6 +1443,45 @@ export const DatabaseWizard: React.FC<DatabaseWizardProps> = ({ onComplete, onCa
 
         .mt-4 {
           margin-top: 16px;
+        }
+
+        .mb-4 {
+          margin-bottom: 16px;
+        }
+
+        .mb-2 {
+          margin-bottom: 8px;
+        }
+
+        .gfs-tiers {
+          display: grid;
+          grid-template-columns: repeat(3, 1fr);
+          gap: 16px;
+          margin-top: 16px;
+        }
+
+        .gfs-tier {
+          background: var(--color-bg-secondary);
+          border-radius: var(--radius-md);
+          padding: 16px;
+        }
+
+        .gfs-tier-header {
+          display: flex;
+          align-items: center;
+          gap: 8px;
+          margin-bottom: 12px;
+          font-weight: 500;
+        }
+
+        .gfs-info p,
+        .gfs-rules {
+          margin: 4px 0;
+          font-size: 12px;
+        }
+
+        .gfs-rules {
+          padding-left: 16px;
         }
       `}</style>
     </div>
