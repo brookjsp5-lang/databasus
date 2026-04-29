@@ -102,7 +102,7 @@ func (s *LocalStorage) Download(ctx context.Context, key string, writer io.Write
 		return fmt.Errorf("failed to read file: %w", err)
 	}
 
-	_, err = writer.Write(data)
+	_, err = writer.WriteAt(data, 0)
 	if err != nil {
 		return fmt.Errorf("failed to write data: %w", err)
 	}
@@ -167,15 +167,17 @@ func (s *LocalStorage) Test() error {
 		return fmt.Errorf("本地存储路径不是目录: %s", s.basePath)
 	}
 
-	if err := os.access(s.basePath, os.W_OK); err != nil {
+	testFile := filepath.Join(s.basePath, ".write_test")
+	if err := os.WriteFile(testFile, []byte("test"), 0644); err != nil {
 		return fmt.Errorf("本地存储路径没有写权限: %s", s.basePath)
 	}
+	os.Remove(testFile)
 
 	return nil
 }
 
 func (s *LocalStorage) GetStorageInfo() (map[string]interface{}, error) {
-	info, err := os.Stat(s.basePath)
+	_, err := os.Stat(s.basePath)
 	if err != nil {
 		return nil, err
 	}
@@ -206,8 +208,8 @@ func getDiskUsage(path string, usage *diskUsageInfo) error {
 	if err := syscall.Statfs(path, stat); err != nil {
 		return err
 	}
-	usage.Total = stat.Bsize * int64(stat.Blocks)
-	usage.Free = stat.Bsize * int64(stat.Bfree)
+	usage.Total = uint64(stat.Bsize) * uint64(stat.Blocks)
+	usage.Free = uint64(stat.Bsize) * uint64(stat.Bfree)
 	usage.Used = usage.Total - usage.Free
 	return nil
 }
@@ -302,7 +304,7 @@ func (s *S3Storage) Download(ctx context.Context, key string, writer io.WriterAt
 		return fmt.Errorf("failed to read response: %w", err)
 	}
 
-	_, err = writer.Write(body)
+	_, err = writer.WriteAt(body, 0)
 	if err != nil {
 		return fmt.Errorf("failed to write data: %w", err)
 	}
@@ -487,7 +489,7 @@ func (s *NASStorage) Download(ctx context.Context, key string, writer io.WriterA
 		return fmt.Errorf("failed to read file: %w", err)
 	}
 
-	_, err = writer.Write(data)
+	_, err = writer.WriteAt(data, 0)
 	if err != nil {
 		return fmt.Errorf("failed to write data: %w", err)
 	}
@@ -551,15 +553,17 @@ func (s *NASStorage) Test() error {
 		return fmt.Errorf("NAS路径不是目录: %s", s.basePath)
 	}
 
-	if err := os.access(s.basePath, os.W_OK); err != nil {
+	testFile := filepath.Join(s.basePath, ".write_test")
+	if err := os.WriteFile(testFile, []byte("test"), 0644); err != nil {
 		return fmt.Errorf("NAS存储路径没有写权限: %s", s.basePath)
 	}
+	os.Remove(testFile)
 
 	return nil
 }
 
 func (s *NASStorage) GetStorageInfo() (map[string]interface{}, error) {
-	info, err := os.Stat(s.basePath)
+	_, err := os.Stat(s.basePath)
 	if err != nil {
 		return nil, err
 	}

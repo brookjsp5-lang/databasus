@@ -3,6 +3,7 @@ import { Link, useLocation } from 'react-router-dom';
 import { Menu, X, ChevronDown, LogOut, Bell } from 'lucide-react';
 import { Layout as AntLayout, Drawer } from 'antd';
 import { useAuthStore } from '../store';
+import { WorkspaceSelector } from './WorkspaceSelector';
 
 const { Header, Sider, Content } = AntLayout;
 
@@ -22,7 +23,8 @@ interface MenuItem {
   key: string;
   icon: string;
   label: string;
-  path: string;
+  path?: string;
+  children?: MenuItem[];
 }
 
 /**
@@ -47,13 +49,13 @@ const MOBILE_BREAKPOINT = 768;
 
 /**
  * AppLayout 主布局组件
- * 
+ *
  * @description 提供应用程序的整体布局结构
- * - 顶部导航栏（Logo、通知、用户菜单）
+ * - 顶部导航栏（Logo、工作空间选择器、通知、用户菜单）
  * - 侧边栏（导航菜单）
  * - 主内容区域
  * - 支持桌面端和移动端自适应
- * 
+ *
  * @example
  * ```tsx
  * <AppLayout>
@@ -64,7 +66,7 @@ const MOBILE_BREAKPOINT = 768;
 export const AppLayout: React.FC<LayoutProps> = ({ children }) => {
   const location = useLocation();
   const { user, logout } = useAuthStore();
-  
+
   // 侧边栏展开状态（桌面端）
   const [sidebarOpen, setSidebarOpen] = useState(true);
   // 用户下拉菜单状态
@@ -111,20 +113,53 @@ export const AppLayout: React.FC<LayoutProps> = ({ children }) => {
 
   /**
    * 渲染菜单项
-   * @description 渲染侧边栏导航菜单项
+   * @description 渲染侧边栏导航菜单项，支持子菜单
    */
-  const renderMenuItem = (item: MenuItem, index: number) => {
+  const renderMenuItem = (item: MenuItem, index: number, isChild: boolean = false) => {
+    if (item.children) {
+      return (
+        <div key={item.key} style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
+          <div
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: '12px',
+              padding: isChild ? '8px 16px 8px 44px' : '12px 16px',
+              borderRadius: '8px',
+              color: 'var(--color-text-secondary)',
+              fontFamily: 'var(--font-body)',
+              fontWeight: '500',
+              fontSize: '14px',
+              animation: sidebarOpen ? `slide-in-right 0.3s ease-out ${index * 0.05}s both` : 'none',
+              opacity: sidebarOpen ? 1 : 0,
+            }}
+          >
+            <span style={{
+              fontSize: '18px',
+              width: '24px',
+              textAlign: 'center',
+              flexShrink: 0
+            }}>
+              {item.icon}
+            </span>
+            <span>{item.label}</span>
+          </div>
+          {item.children.map((child, childIndex) => renderMenuItem(child, childIndex, true))}
+        </div>
+      );
+    }
+
     const isActive = currentPath === item.key;
     return (
       <Link
         key={item.key}
-        to={item.path}
+        to={item.path || '#'}
         className={`cyber-menu-item ${isActive ? 'active' : ''}`}
         style={{
           display: 'flex',
           alignItems: 'center',
           gap: '12px',
-          padding: '12px 16px',
+          padding: isChild ? '8px 16px 8px 44px' : '12px 16px',
           borderRadius: '8px',
           textDecoration: 'none',
           color: isActive ? 'var(--color-primary)' : 'var(--color-text)',
@@ -137,7 +172,6 @@ export const AppLayout: React.FC<LayoutProps> = ({ children }) => {
           fontSize: '14px',
         }}
         onClick={() => {
-          // 移动端点击菜单项后关闭抽屉
           if (isMobile) {
             setMobileDrawerOpen(false);
           }
@@ -181,7 +215,7 @@ export const AppLayout: React.FC<LayoutProps> = ({ children }) => {
    */
   const renderSidebarContent = () => (
     <>
-      <nav style={{ 
+      <nav style={{
         padding: '16px 12px 16px 16px',
         display: 'flex',
         flexDirection: 'column',
@@ -314,6 +348,13 @@ export const AppLayout: React.FC<LayoutProps> = ({ children }) => {
               </div>
             </div>
           </div>
+
+          {/* 工作空间选择器 - 桌面端显示 */}
+          {!isMobile && (
+            <div style={{ marginLeft: '16px' }}>
+              <WorkspaceSelector />
+            </div>
+          )}
         </div>
 
         <div style={{ display: 'flex', alignItems: 'center', gap: '20px' }}>
@@ -486,6 +527,10 @@ export const AppLayout: React.FC<LayoutProps> = ({ children }) => {
             }}
             closeIcon={<X size={20} />}
           >
+            {/* 移动端工作空间选择器 */}
+            <div style={{ padding: '12px 16px', borderBottom: '1px solid var(--color-border-light)' }}>
+              <WorkspaceSelector />
+            </div>
             {renderSidebarContent()}
           </Drawer>
         )}

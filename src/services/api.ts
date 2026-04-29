@@ -1,6 +1,6 @@
 /**
  * API服务层
- * 
+ *
  * @description 封装所有与后端的HTTP通信，包括：
  * - 用户认证（登录、注册、登出）
  * - 数据库管理（MySQL、PostgreSQL）
@@ -8,14 +8,15 @@
  * - 存储配置（S3、本地、NFS）
  * - 系统设置（SMTP、告警等）
  * - GFS保留策略
- * 
+ * - 工作空间管理
+ *
  * @module services/api
  */
 
 import axios from 'axios';
 
-/** API基础URL，优先使用环境变量，否则使用本地开发服务器 */
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:6001';
+/** API基础URL，优先使用环境变量，生产环境使用相对路径 */
+const API_URL = import.meta.env.VITE_API_URL || '';
 
 /** 创建axios实例 */
 const api = axios.create({
@@ -146,7 +147,7 @@ export interface DashboardStats {
 }
 
 export const statsAPI = {
-  getDashboardStats: (workspaceId: number): Promise<DashboardStats> => 
+  getDashboardStats: (workspaceId: number): Promise<DashboardStats> =>
     api.get('/api/stats', { params: { workspace_id: workspaceId } }),
 };
 
@@ -171,16 +172,32 @@ export const auditLogAPI = {
     end_date?: string;
     page?: number;
     page_size?: number;
-  }): Promise<{ logs: AuditLog[]; total: number }> => 
+  }): Promise<{ logs: AuditLog[]; total: number }> =>
     api.get('/api/audit-logs', { params }),
 };
 
+/**
+ * 工作空间数据类型
+ * @description 定义工作空间基本信息
+ */
+export interface Workspace {
+  id: number;
+  name: string;
+  description?: string;
+  created_by?: number;
+  created_at?: string;
+  updated_at?: string;
+  role?: string;
+}
+
 // 工作空间相关
 export const workspaceAPI = {
-  getAll: (): Promise<{ workspaces: any[] }> => api.get('/api/workspaces'),
-  create: (data: { name: string }): Promise<{ workspace: any }> => api.post('/api/workspaces', data),
-  getById: (id: number): Promise<{ workspace: any }> => api.get(`/api/workspaces/${id}`),
-  update: (id: number, data: { name: string }): Promise<{ workspace: any }> => api.put(`/api/workspaces/${id}`, data),
+  getAll: (): Promise<{ workspaces: Workspace[] }> => api.get('/api/workspaces'),
+  create: (data: { name: string; description?: string }): Promise<{ workspace: Workspace }> =>
+    api.post('/api/workspaces', data),
+  getById: (id: number): Promise<{ workspace: Workspace }> => api.get(`/api/workspaces/${id}`),
+  update: (id: number, data: { name: string; description?: string }): Promise<{ workspace: Workspace }> =>
+    api.put(`/api/workspaces/${id}`, data),
   delete: (id: number): Promise<{ message: string }> => api.delete(`/api/workspaces/${id}`),
 };
 
@@ -291,7 +308,7 @@ export interface GFSCleanupPreview {
 }
 
 export const retentionAPI = {
-  getGFSConfig: (configId: number): Promise<{ config: GFSConfig }> => 
+  getGFSConfig: (configId: number): Promise<{ config: GFSConfig }> =>
     api.get(`/api/retention/gfs/${configId}`),
   updateGFSConfig: (data: {
     config_id: number;
@@ -301,7 +318,7 @@ export const retentionAPI = {
     father_weeks: number;
     grandfather_enabled: boolean;
     grandfather_months: number;
-  }): Promise<{ message: string; config: any }> => 
+  }): Promise<{ message: string; config: any }> =>
     api.put('/api/retention/gfs', data),
   executeCleanup: (configId: number): Promise<{ message: string; result: any }> =>
     api.post('/api/retention/gfs/cleanup', { config_id: configId }),
@@ -313,14 +330,14 @@ export const retentionAPI = {
 
 // 告警相关
 export const alertAPI = {
-  getAll: (params?: { workspace_id?: number; level?: string; is_read?: boolean }): Promise<{ alerts: any[] }> => 
+  getAll: (params?: { workspace_id?: number; level?: string; is_read?: boolean }): Promise<{ alerts: any[] }> =>
     api.get('/api/alerts', { params }),
   getById: (id: number): Promise<{ alert: any }> => api.get(`/api/alerts/${id}`),
   markAsRead: (id: number): Promise<{ message: string }> => api.put(`/api/alerts/${id}/read`),
-  markAllAsRead: (workspaceId?: number): Promise<{ message: string }> => 
+  markAllAsRead: (workspaceId?: number): Promise<{ message: string }> =>
     api.put('/api/alerts/read-all', { workspace_id: workspaceId }),
   delete: (id: number): Promise<{ message: string }> => api.delete(`/api/alerts/${id}`),
-  getUnreadCount: (workspaceId?: number): Promise<{ count: number }> => 
+  getUnreadCount: (workspaceId?: number): Promise<{ count: number }> =>
     api.get('/api/alerts/unread-count', { params: { workspace_id: workspaceId } }),
 };
 
@@ -339,7 +356,7 @@ export interface SMTPConfig {
 export const settingsAPI = {
   getAll: (): Promise<{ settings: any[] }> => api.get('/api/settings'),
   getByKey: (key: string): Promise<{ key: string; value: string }> => api.get(`/api/settings/${key}`),
-  set: (key: string, value: string): Promise<{ message: string }> => 
+  set: (key: string, value: string): Promise<{ message: string }> =>
     api.post('/api/settings', { key, value }),
   delete: (key: string): Promise<{ message: string }> => api.delete(`/api/settings/${key}`),
   getAlertSettings: (): Promise<any> => api.get('/api/settings/alert'),
@@ -348,7 +365,7 @@ export const settingsAPI = {
   setBackupSettings: (data: any): Promise<{ message: string }> => api.post('/api/settings/backup', data),
   getSMTPConfig: (): Promise<{ smtp_config: SMTPConfig }> => api.get('/api/settings/smtp'),
   saveSMTPConfig: (data: SMTPConfig): Promise<{ message: string }> => api.post('/api/settings/smtp', data),
-  testSMTPConnection: (data: SMTPConfig): Promise<{ message: string; success: boolean }> => 
+  testSMTPConnection: (data: SMTPConfig): Promise<{ message: string; success: boolean }> =>
     api.post('/api/settings/smtp/test', data),
   testSendEmail: (toAddress: string): Promise<{ message: string; success: boolean }> =>
     api.post('/api/settings/smtp/test-email', { to_address: toAddress }),

@@ -7,84 +7,56 @@
  * - 编辑存储配置
  * - 删除存储配置
  * - 存储使用统计
- * 
- * @module pages/Storages
- * @requires React
- * @requires antd (Table, Button, Modal, Form等)
- * @requires lucide-react (图标)
  */
 
 import React, { useEffect, useState } from 'react';
 import { Table, Button, Modal, Form, Input, Select, Tag, message, Popconfirm, Space, Card } from 'antd';
 import { Plus, Edit2, Trash2, HardDrive, Database } from 'lucide-react';
+import { storageAPI } from '../services/api';
 
-/**
- * 存储配置接口
- * @description 定义存储配置的信息
- */
 interface Storage {
-  /** 存储配置ID */
   id: number;
-  /** 存储名称 */
   name: string;
-  /** 存储类型: local | s3 | nas */
   type: string;
-  /** 存储配置详情 */
   config: any;
-  /** 创建时间 */
   created_at: string;
-  /** 更新时间 */
   updated_at: string;
 }
 
-/** 存储类型标签映射 */
 const storageTypeLabels: Record<string, string> = {
   local: '本地存储',
   s3: 'S3兼容存储',
   nas: 'NAS存储',
 };
 
-/** 存储类型颜色映射 */
 const storageTypeColors: Record<string, string> = {
   local: 'green',
   s3: 'blue',
   nas: 'purple',
 };
 
-/**
- * Storages 存储管理组件
- * 
- * @description 提供存储配置管理功能
- * - 查看所有存储配置
- * - 添加新存储（本地/S3/NAS）
- * - 编辑存储配置
- * - 删除存储配置
- * 
- * @example
- * ```tsx
- * <Storages />
- * ```
- */
 export const Storages: React.FC = () => {
-  /** 存储列表 */
   const [storages, setStorages] = useState<Storage[]>([]);
-  /** 加载状态 */
   const [loading, setLoading] = useState(true);
-  /** 模态框可见性 */
   const [modalOpen, setModalOpen] = useState(false);
-  /** 编辑中的存储 */
   const [editingStorage, setEditingStorage] = useState<Storage | null>(null);
-  /** 表单实例 */
   const [form] = Form.useForm();
 
-  /** 获取存储列表 */
   const fetchStorages = async () => {
+    try {
+      const data = await storageAPI.getAll();
+      setStorages((data?.storages || []) as Storage[]);
+    } catch (error) {
       console.error('Failed to fetch storages:', error);
       message.error('获取存储列表失败');
     } finally {
       setLoading(false);
     }
   };
+
+  useEffect(() => {
+    fetchStorages();
+  }, []);
 
   const handleCreate = async (values: any) => {
     try {
@@ -102,23 +74,16 @@ export const Storages: React.FC = () => {
         config.host = values.host;
       }
 
-      const response = await fetch('http://localhost:6001/api/storages', {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${localStorage.getItem('token')}`,
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({ ...values, config })
+      await storageAPI.create({
+        name: values.name,
+        type: values.type,
+        config,
+        workspace_id: 1,
       });
-      if (response.ok) {
-        message.success('存储创建成功');
-        setModalOpen(false);
-        form.resetFields();
-        fetchStorages();
-      } else {
-        const data = await response.json();
-        message.error(data.error || '创建失败');
-      }
+      message.success('存储创建成功');
+      setModalOpen(false);
+      form.resetFields();
+      fetchStorages();
     } catch (error) {
       message.error('创建失败');
     }
@@ -141,24 +106,16 @@ export const Storages: React.FC = () => {
         config.host = values.host;
       }
 
-      const response = await fetch(`http://localhost:6001/api/storages/${editingStorage.id}`, {
-        method: 'PUT',
-        headers: {
-          'Authorization': `Bearer ${localStorage.getItem('token')}`,
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({ ...values, config })
+      await storageAPI.update(editingStorage.id, {
+        name: values.name,
+        type: values.type,
+        config,
       });
-      if (response.ok) {
-        message.success('存储更新成功');
-        setModalOpen(false);
-        setEditingStorage(null);
-        form.resetFields();
-        fetchStorages();
-      } else {
-        const data = await response.json();
-        message.error(data.error || '更新失败');
-      }
+      message.success('存储更新成功');
+      setModalOpen(false);
+      setEditingStorage(null);
+      form.resetFields();
+      fetchStorages();
     } catch (error) {
       message.error('更新失败');
     }
@@ -166,17 +123,9 @@ export const Storages: React.FC = () => {
 
   const handleDelete = async (id: number) => {
     try {
-      const response = await fetch(`http://localhost:6001/api/storages/${id}`, {
-        method: 'DELETE',
-        headers: {
-          'Authorization': `Bearer ${localStorage.getItem('token')}`,
-          'Content-Type': 'application/json'
-        }
-      });
-      if (response.ok) {
-        message.success('存储已删除');
-        fetchStorages();
-      }
+      await storageAPI.delete(id);
+      message.success('存储已删除');
+      fetchStorages();
     } catch (error) {
       message.error('删除失败');
     }
@@ -184,10 +133,16 @@ export const Storages: React.FC = () => {
 
   const openEditModal = (storage: Storage) => {
     setEditingStorage(storage);
+    let parsedConfig = {};
+    try {
+      parsedConfig = typeof storage.config === 'string' ? JSON.parse(storage.config) : (storage.config || {});
+    } catch (e) {
+      parsedConfig = {};
+    }
     form.setFieldsValue({
       name: storage.name,
       type: storage.type,
-      ...storage.config,
+      ...parsedConfig,
     });
     setModalOpen(true);
   };
@@ -198,11 +153,13 @@ export const Storages: React.FC = () => {
       dataIndex: 'id',
       key: 'id',
       width: 80,
+      render: (id: number) => <span className="font-mono text-sm" style={{ color: 'var(--color-primary)' }}>#{id}</span>,
     },
     {
       title: '名称',
       dataIndex: 'name',
       key: 'name',
+      render: (name: string) => <span className="font-medium">{name}</span>,
     },
     {
       title: '类型',
@@ -220,8 +177,14 @@ export const Storages: React.FC = () => {
       key: 'config',
       render: (config: any) => {
         if (!config) return '-';
+        if (typeof config === 'string') {
+          try {
+            config = JSON.parse(config);
+          } catch (e) { return '-'; }
+        }
         if (config.path) return `路径: ${config.path}`;
         if (config.endpoint && config.bucket) return `${config.endpoint}/${config.bucket}`;
+        if (config.host && config.path) return `${config.host}:${config.path}`;
         return '-';
       },
     },
@@ -237,17 +200,8 @@ export const Storages: React.FC = () => {
       width: 150,
       render: (_: any, record: Storage) => (
         <Space>
-          <Button
-            type="text"
-            icon={<Edit2 size={16} />}
-            onClick={() => openEditModal(record)}
-          />
-          <Popconfirm
-            title="确定删除此存储？"
-            onConfirm={() => handleDelete(record.id)}
-            okText="确定"
-            cancelText="取消"
-          >
+          <Button type="text" icon={<Edit2 size={16} />} onClick={() => openEditModal(record)} />
+          <Popconfirm title="确定删除此存储？" onConfirm={() => handleDelete(record.id)} okText="确定" cancelText="取消">
             <Button type="text" danger icon={<Trash2 size={16} />} />
           </Popconfirm>
         </Space>
@@ -262,60 +216,27 @@ export const Storages: React.FC = () => {
           <h1 className="page-title">存储管理</h1>
           <p className="page-description">配置备份存储目的地</p>
         </div>
-        <Button
-          type="primary"
-          icon={<Plus size={16} />}
-          onClick={() => {
-            setEditingStorage(null);
-            form.resetFields();
-            setModalOpen(true);
-          }}
-        >
+        <Button type="primary" icon={<Plus size={16} />} onClick={() => { setEditingStorage(null); form.resetFields(); setModalOpen(true); }}>
           添加存储
         </Button>
       </div>
 
-      <Table
-        columns={columns}
-        dataSource={storages}
-        rowKey="id"
-        loading={loading}
-        pagination={{ pageSize: 10 }}
-      />
+      <Table columns={columns} dataSource={storages} rowKey="id" loading={loading} pagination={{ pageSize: 10 }} />
 
       <Modal
         title={editingStorage ? '编辑存储' : '添加存储'}
         open={modalOpen}
-        onCancel={() => {
-          setModalOpen(false);
-          setEditingStorage(null);
-          form.resetFields();
-        }}
+        onCancel={() => { setModalOpen(false); setEditingStorage(null); form.resetFields(); }}
         footer={null}
-        width={500}
+        width={520}
       >
-        <Form
-          form={form}
-          onFinish={editingStorage ? handleUpdate : handleCreate}
-          layout="vertical"
-        >
-          <Form.Item
-            name="name"
-            label="存储名称"
-            rules={[{ required: true, message: '请输入存储名称' }]}
-          >
+        <Form form={form} onFinish={editingStorage ? handleUpdate : handleCreate} layout="vertical">
+          <Form.Item name="name" label="存储名称" rules={[{ required: true, message: '请输入存储名称' }]}>
             <Input placeholder="请输入存储名称" />
           </Form.Item>
 
-          <Form.Item
-            name="type"
-            label="存储类型"
-            rules={[{ required: true, message: '请选择存储类型' }]}
-          >
-            <Select
-              placeholder="请选择存储类型"
-              onChange={() => form.resetFields(['path', 'endpoint', 'bucket', 'access_key', 'secret_key', 'region', 'host'])}
-            >
+          <Form.Item name="type" label="存储类型" rules={[{ required: true, message: '请选择存储类型' }]}>
+            <Select placeholder="请选择存储类型" onChange={() => form.resetFields(['path', 'endpoint', 'bucket', 'access_key', 'secret_key', 'region', 'host'])}>
               <Select.Option value="local">本地存储</Select.Option>
               <Select.Option value="s3">S3兼容存储</Select.Option>
               <Select.Option value="nas">NAS存储</Select.Option>
@@ -370,9 +291,7 @@ export const Storages: React.FC = () => {
           </Form.Item>
 
           <Form.Item>
-            <Button type="primary" htmlType="submit" block>
-              {editingStorage ? '更新' : '创建'}
-            </Button>
+            <Button type="primary" htmlType="submit" block>{editingStorage ? '更新' : '创建'}</Button>
           </Form.Item>
         </Form>
       </Modal>

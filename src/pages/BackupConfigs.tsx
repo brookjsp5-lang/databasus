@@ -48,7 +48,7 @@ export const BackupConfigs: React.FC = () => {
   const fetchConfigs = async () => {
     setLoading(true);
     try {
-      const response = await fetch('http://localhost:6001/api/backup-configs', {
+      const response = await fetch('/api/backup-configs', {
         headers: {
           'Authorization': `Bearer ${localStorage.getItem('token')}`,
           'Content-Type': 'application/json'
@@ -68,7 +68,7 @@ export const BackupConfigs: React.FC = () => {
 
   const handleCreate = async (values: any) => {
     try {
-      const response = await fetch('http://localhost:6001/api/backup-configs', {
+      const response = await fetch('/api/backup-configs', {
         method: 'POST',
         headers: {
           'Authorization': `Bearer ${localStorage.getItem('token')}`,
@@ -93,7 +93,7 @@ export const BackupConfigs: React.FC = () => {
   const handleUpdate = async (values: any) => {
     if (!editingConfig) return;
     try {
-      const response = await fetch(`http://localhost:6001/api/backup-configs/${editingConfig.id}`, {
+      const response = await fetch(`/api/backup-configs/${editingConfig.id}`, {
         method: 'PUT',
         headers: {
           'Authorization': `Bearer ${localStorage.getItem('token')}`,
@@ -118,7 +118,7 @@ export const BackupConfigs: React.FC = () => {
 
   const handleDelete = async (id: number) => {
     try {
-      const response = await fetch(`http://localhost:6001/api/backup-configs/${id}`, {
+      const response = await fetch(`/api/backup-configs/${id}`, {
         method: 'DELETE',
         headers: {
           'Authorization': `Bearer ${localStorage.getItem('token')}`,
@@ -138,7 +138,7 @@ export const BackupConfigs: React.FC = () => {
     try {
       const config = configs.find(c => c.id === id);
       if (!config) return;
-      const response = await fetch(`http://localhost:6001/api/backup-configs/${id}`, {
+      const response = await fetch(`/api/backup-configs/${id}`, {
         method: 'PUT',
         headers: {
           'Authorization': `Bearer ${localStorage.getItem('token')}`,

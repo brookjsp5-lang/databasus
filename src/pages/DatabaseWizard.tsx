@@ -534,9 +534,9 @@ export const DatabaseWizard: React.FC<DatabaseWizardProps> = ({ onComplete, onCa
         <Form.Item
           name="database_name"
           label="数据库名"
-          rules={[{ required: true, message: '请输入数据库名' }]}
+          extra="全量备份时可留空，将备份实例中所有数据库"
         >
-          <Input placeholder="mydb" />
+          <Input placeholder="留空则备份实例中所有数据库" />
         </Form.Item>
 
         <Form.Item
@@ -965,9 +965,9 @@ export const DatabaseWizard: React.FC<DatabaseWizardProps> = ({ onComplete, onCa
                     message="GFS 层级保留策略"
                     description={
                       <div className="gfs-info">
-                        <p><strong>Son (儿子层)</strong>: 日/周备份 - 保留最近N天</p>
-                        <p><strong>Father (父亲层)</strong>: 月度备份 - 保留最近N周</p>
-                        <p><strong>Grandfather (祖父层)</strong>: 年度备份 - 保留最近N个月</p>
+                        <p><strong>Son (日备份层)</strong>: 每日备份，保留最近N天</p>
+                        <p><strong>Father (周备份层)</strong>: 每周备份，保留最近N周</p>
+                        <p><strong>Grandfather (月备份层)</strong>: 每月备份，保留最近N个月</p>
                       </div>
                     }
                     type="info"
@@ -979,7 +979,7 @@ export const DatabaseWizard: React.FC<DatabaseWizardProps> = ({ onComplete, onCa
                     <div className="gfs-tier son-tier">
                       <div className="gfs-tier-header">
                         <Tag color="blue">Son</Tag>
-                        <span>日/周备份保留</span>
+                        <span>日备份保留</span>
                       </div>
                       <Form.Item name="gfs_son_enabled" valuePropName="checked" className="mb-2">
                         <Switch checkedChildren="启用" unCheckedChildren="禁用" />
@@ -1005,7 +1005,7 @@ export const DatabaseWizard: React.FC<DatabaseWizardProps> = ({ onComplete, onCa
                     <div className="gfs-tier father-tier">
                       <div className="gfs-tier-header">
                         <Tag color="green">Father</Tag>
-                        <span>月度备份保留</span>
+                        <span>周备份保留</span>
                       </div>
                       <Form.Item name="gfs_father_enabled" valuePropName="checked" className="mb-2">
                         <Switch checkedChildren="启用" unCheckedChildren="禁用" />
@@ -1031,7 +1031,7 @@ export const DatabaseWizard: React.FC<DatabaseWizardProps> = ({ onComplete, onCa
                     <div className="gfs-tier grandfather-tier">
                       <div className="gfs-tier-header">
                         <Tag color="orange">Grandfather</Tag>
-                        <span>年度备份保留</span>
+                        <span>月备份保留</span>
                       </div>
                       <Form.Item name="gfs_grandfather_enabled" valuePropName="checked" className="mb-2">
                         <Switch checkedChildren="启用" unCheckedChildren="禁用" />
@@ -1186,7 +1186,7 @@ export const DatabaseWizard: React.FC<DatabaseWizardProps> = ({ onComplete, onCa
       case 0:
         return databaseForm.getFieldValue('database_type');
       case 1:
-        return databaseForm.getFieldValue('host') && databaseForm.getFieldValue('database_name');
+        return databaseForm.getFieldValue('host');
       default:
         return true;
     }

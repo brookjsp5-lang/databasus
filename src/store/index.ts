@@ -33,23 +33,73 @@ export const useAuthStore = create<AuthState>()(
   )
 );
 
-interface AppState {
-  loading: boolean;
-  setLoading: (loading: boolean) => void;
-  currentWorkspaceId: number | null;
-  setCurrentWorkspaceId: (id: number | null) => void;
+export interface Workspace {
+  id: number;
+  name: string;
+  description?: string;
+  created_by?: number;
+  created_at?: string;
+  updated_at?: string;
+  role?: string;
 }
 
-export const useAppStore = create<AppState>()(
+interface WorkspaceState {
+  workspaces: Workspace[];
+  currentWorkspace: Workspace | null;
+  loading: boolean;
+  error: string | null;
+  setWorkspaces: (workspaces: Workspace[]) => void;
+  setCurrentWorkspace: (workspace: Workspace | null) => void;
+  addWorkspace: (workspace: Workspace) => void;
+  updateWorkspace: (workspace: Workspace) => void;
+  removeWorkspace: (id: number) => void;
+  setLoading: (loading: boolean) => void;
+  setError: (error: string | null) => void;
+}
+
+export const useWorkspaceStore = create<WorkspaceState>()(
   persist(
     (set) => ({
+      workspaces: [],
+      currentWorkspace: null,
       loading: false,
+      error: null,
+      setWorkspaces: (workspaces) => set({ workspaces }),
+      setCurrentWorkspace: (workspace) => set({ currentWorkspace: workspace }),
+      addWorkspace: (workspace) =>
+        set((state) => ({
+          workspaces: [...state.workspaces, workspace],
+        })),
+      updateWorkspace: (workspace) =>
+        set((state) => ({
+          workspaces: state.workspaces.map((w) =>
+            w.id === workspace.id ? workspace : w
+          ),
+        })),
+      removeWorkspace: (id) =>
+        set((state) => ({
+          workspaces: state.workspaces.filter((w) => w.id !== id),
+          currentWorkspace:
+            state.currentWorkspace?.id === id ? null : state.currentWorkspace,
+        })),
       setLoading: (loading) => set({ loading }),
-      currentWorkspaceId: null,
-      setCurrentWorkspaceId: (id) => set({ currentWorkspaceId: id }),
+      setError: (error) => set({ error }),
     }),
     {
-      name: 'app-storage',
+      name: 'workspace-storage',
+      partialize: (state) => ({
+        currentWorkspace: state.currentWorkspace,
+      }),
     }
   )
 );
+
+interface AppState {
+  loading: boolean;
+  setLoading: (loading: boolean) => void;
+}
+
+export const useAppStore = create<AppState>()((set) => ({
+  loading: false,
+  setLoading: (loading) => set({ loading }),
+}));

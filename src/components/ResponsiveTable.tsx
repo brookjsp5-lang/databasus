@@ -15,18 +15,19 @@
 
 import React, { useState, useEffect, ReactNode } from 'react';
 import { Table, Card, Tag, Button, Empty } from 'antd';
-import { Mobile, Desktop } from 'lucide-react';
+import { Smartphone, Monitor } from 'lucide-react';
 import type { ColumnsType, TableProps } from 'antd/es/table';
 
 /**
  * 响应式表格列配置接口
  */
-interface ResponsiveColumn<T> extends ColumnsType<T>[number] {
-  /** 是否在移动端隐藏 */
+interface ResponsiveColumn<T> {
+  key?: string | number;
+  title?: ReactNode;
+  dataIndex?: keyof T;
+  render?: (value: any, record: T, index: number) => ReactNode;
   hideOnMobile?: boolean;
-  /** 移动端显示的标签 */
   mobileLabel?: string;
-  /** 自定义移动端渲染 */
   mobileRender?: (value: any, record: T, index: number) => ReactNode;
 }
 
@@ -111,7 +112,7 @@ export function ResponsiveTable<T extends { id?: string | number }>({
             color: 'var(--color-text-secondary)',
           }}
         >
-          <Mobile size={14} />
+          <Smartphone size={14} />
           <span>卡片视图 - {dataSource.length} 条记录</span>
         </div>
 
@@ -192,18 +193,17 @@ export function ResponsiveTable<T extends { id?: string | number }>({
             color: 'var(--color-text-secondary)',
           }}
         >
-          <Desktop size={14} />
+          <Monitor size={14} />
           <span>表格视图</span>
         </div>
       )}
 
       <Table
-        columns={desktopColumns}
+        columns={desktopColumns as any}
         dataSource={dataSource}
         loading={loading}
         locale={{ emptyText }}
         scroll={{ x: 'max-content' }}
-        responsive
         {...tableProps}
       />
     </div>

@@ -50,7 +50,7 @@ export const Workspaces: React.FC = () => {
   const fetchWorkspaces = async () => {
     setLoading(true);
     try {
-      const response = await fetch('http://localhost:6001/api/workspaces', {
+      const response = await fetch('/api/workspaces', {
         headers: {
           'Authorization': `Bearer ${localStorage.getItem('token')}`,
           'Content-Type': 'application/json'
@@ -70,7 +70,7 @@ export const Workspaces: React.FC = () => {
 
   const fetchMembers = async (workspaceId: number) => {
     try {
-      const response = await fetch(`http://localhost:6001/api/workspaces/${workspaceId}/members`, {
+      const response = await fetch(`/api/workspaces/${workspaceId}/members`, {
         headers: {
           'Authorization': `Bearer ${localStorage.getItem('token')}`,
           'Content-Type': 'application/json'
@@ -88,7 +88,7 @@ export const Workspaces: React.FC = () => {
 
   const handleCreate = async (values: { name: string }) => {
     try {
-      const response = await fetch('http://localhost:6001/api/workspaces', {
+      const response = await fetch('/api/workspaces', {
         method: 'POST',
         headers: {
           'Authorization': `Bearer ${localStorage.getItem('token')}`,
@@ -112,7 +112,7 @@ export const Workspaces: React.FC = () => {
 
   const handleDelete = async (id: number) => {
     try {
-      const response = await fetch(`http://localhost:6001/api/workspaces/${id}`, {
+      const response = await fetch(`/api/workspaces/${id}`, {
         method: 'DELETE',
         headers: {
           'Authorization': `Bearer ${localStorage.getItem('token')}`,
@@ -131,7 +131,7 @@ export const Workspaces: React.FC = () => {
   const handleInvite = async (values: { email: string; role: string }) => {
     if (!selectedWorkspace) return;
     try {
-      const response = await fetch(`http://localhost:6001/api/workspaces/${selectedWorkspace.id}/members`, {
+      const response = await fetch(`/api/workspaces/${selectedWorkspace.id}/members`, {
         method: 'POST',
         headers: {
           'Authorization': `Bearer ${localStorage.getItem('token')}`,
@@ -156,7 +156,7 @@ export const Workspaces: React.FC = () => {
   const handleUpdateRole = async (memberId: number, newRole: string) => {
     if (!selectedWorkspace) return;
     try {
-      const response = await fetch(`http://localhost:6001/api/workspaces/${selectedWorkspace.id}/members/${memberId}`, {
+      const response = await fetch(`/api/workspaces/${selectedWorkspace.id}/members/${memberId}`, {
         method: 'PUT',
         headers: {
           'Authorization': `Bearer ${localStorage.getItem('token')}`,
@@ -176,7 +176,7 @@ export const Workspaces: React.FC = () => {
   const handleRemoveMember = async (memberId: number) => {
     if (!selectedWorkspace) return;
     try {
-      const response = await fetch(`http://localhost:6001/api/workspaces/${selectedWorkspace.id}/members/${memberId}`, {
+      const response = await fetch(`/api/workspaces/${selectedWorkspace.id}/members/${memberId}`, {
         method: 'DELETE',
         headers: {
           'Authorization': `Bearer ${localStorage.getItem('token')}`,

@@ -24,7 +24,7 @@ type CreateMySQLDatabaseRequest struct {
 	Port                      int    `json:"port" binding:"required,min=1,max=65535"`
 	User                      string `json:"user" binding:"required"`
 	Password                  string `json:"password" binding:"required"`
-	DatabaseName              string `json:"database_name" binding:"required"`
+	DatabaseName              string `json:"database_name"`
 	EngineVersion             string `json:"engine_version"`
 	IsPhysicalBackupSupported bool   `json:"is_physical_backup_supported"`
 	BinaryLogEnabled          bool   `json:"binary_log_enabled"`
@@ -53,7 +53,7 @@ type CreatePostgreSQLDatabaseRequest struct {
 	Port         int    `json:"port" binding:"required,min=1,max=65535"`
 	User         string `json:"user" binding:"required"`
 	Password     string `json:"password" binding:"required"`
-	DatabaseName string `json:"database_name" binding:"required"`
+	DatabaseName string `json:"database_name"`
 	EngineVersion string `json:"engine_version"`
 	WALEnabled   bool   `json:"wal_enabled"`
 	WALPath      string `json:"wal_path"`
@@ -65,7 +65,7 @@ type UpdatePostgreSQLDatabaseRequest struct {
 	Port         int    `json:"port" binding:"required,min=1,max=65535"`
 	User         string `json:"user" binding:"required"`
 	Password     string `json:"password"`
-	DatabaseName string `json:"database_name" binding:"required"`
+	DatabaseName string `json:"database_name"`
 	EngineVersion string `json:"engine_version"`
 	WALEnabled   bool   `json:"wal_enabled"`
 	WALPath      string `json:"wal_path"`

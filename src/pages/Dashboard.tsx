@@ -96,6 +96,15 @@ export const Dashboard: React.FC = () => {
    * 获取仪表盘数据
    * @description 从API获取统计数据和备份列表，并处理加载状态
    */
+  const fetchDashboardData = async () => {
+    try {
+      const [statsData, backupsData] = await Promise.all([
+        statsAPI.getDashboardStats(1),
+        backupAPI.getAll()
+      ]);
+
+      if (statsData) {
+        setStats({
           total_databases: 0,
           total_backups: 0,
           success_rate: 0,

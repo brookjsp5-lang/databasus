@@ -119,7 +119,7 @@ export const AuditLogs: React.FC = () => {
       if (filters.start_date) params.append('start_date', filters.start_date);
       if (filters.end_date) params.append('end_date', filters.end_date);
 
-      const response = await fetch(`http://localhost:6001/api/audit-logs?${params.toString()}`, {
+      const response = await fetch(`/api/audit-logs?${params.toString()}`, {
         headers: {
           'Authorization': `Bearer ${localStorage.getItem('token')}`,
           'Content-Type': 'application/json'

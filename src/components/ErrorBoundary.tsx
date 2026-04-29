@@ -13,7 +13,7 @@
 
 import React, { Component, ErrorInfo, ReactNode } from 'react';
 import { Button, Result } from 'antd';
-import { WarningOutlined, ReloadOutlined } from '@ant-design/icons';
+import { AlertTriangle, RotateCcw } from 'lucide-react';
 
 /**
  * ErrorBoundary组件属性接口
@@ -158,14 +158,14 @@ export class ErrorBoundary extends Component<Props, State> {
       >
         <Result
           status="error"
-          icon={<WarningOutlined style={{ color: '#ff4d4f' }} />}
+          icon={<AlertTriangle style={{ color: '#ff4d4f' }} />}
           title="抱歉，页面出现了一些问题"
           subTitle="应用程序遇到了一个意外错误，请尝试刷新页面或联系技术支持。"
           extra={[
             <Button
               key="retry"
               type="primary"
-              icon={<ReloadOutlined />}
+              icon={<RotateCcw />}
               onClick={this.handleRetry}
               size="large"
             >
@@ -303,7 +303,7 @@ export const PageErrorBoundary: React.FC<PageErrorBoundaryProps> = ({
         <div style={{ padding: '24px' }}>
           <Result
             status="error"
-            icon={<WarningOutlined style={{ color: '#ff4d4f' }} />}
+            icon={<AlertTriangle style={{ color: '#ff4d4f' }} />}
             title={`${pageTitle || '页面'}加载失败`}
             subTitle="请稍后重试，或刷新页面。"
             extra={[

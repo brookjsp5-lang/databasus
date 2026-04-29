@@ -158,7 +158,7 @@ func (h *RetentionHandler) executeGFSCleanupForConfig(configID uint) (*GFSCleanu
 				} else {
 					result.DeletedBackups = append(result.DeletedBackups, backup.ID)
 					result.DeletedCount++
-					result.RtainedCount--
+					result.RetainedCount--
 				}
 			}
 		}
@@ -171,7 +171,7 @@ func (h *RetentionHandler) executeGFSCleanupForConfig(configID uint) (*GFSCleanu
 				} else {
 					result.DeletedBackups = append(result.DeletedBackups, backup.ID)
 					result.DeletedCount++
-					result.RtainedCount--
+					result.RetainedCount--
 				}
 			}
 		}

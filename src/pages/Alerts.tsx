@@ -192,7 +192,7 @@ export const Alerts: React.FC = () => {
   const fetchAlerts = async () => {
     setLoading(true);
     try {
-      const response = await fetch('http://localhost:6001/api/alerts', {
+      const response = await fetch('/api/alerts', {
         headers: {
           'Authorization': `Bearer ${localStorage.getItem('token')}`,
           'Content-Type': 'application/json'
@@ -212,7 +212,7 @@ export const Alerts: React.FC = () => {
 
   const fetchUnreadCount = async () => {
     try {
-      const response = await fetch('http://localhost:6001/api/alerts/unread-count', {
+      const response = await fetch('/api/alerts/unread-count', {
         headers: {
           'Authorization': `Bearer ${localStorage.getItem('token')}`,
           'Content-Type': 'application/json'
@@ -230,7 +230,7 @@ export const Alerts: React.FC = () => {
   const fetchSMTPConfig = async () => {
     setSmtpLoading(true);
     try {
-      const response = await fetch('http://localhost:6001/api/settings/smtp', {
+      const response = await fetch('/api/settings/smtp', {
         headers: {
           'Authorization': `Bearer ${localStorage.getItem('token')}`,
           'Content-Type': 'application/json'
@@ -272,7 +272,7 @@ export const Alerts: React.FC = () => {
 
   const fetchUserPreferences = async () => {
     try {
-      const response = await fetch('http://localhost:6001/api/alerts/preferences', {
+      const response = await fetch('/api/alerts/preferences', {
         headers: {
           'Authorization': `Bearer ${localStorage.getItem('token')}`,
           'Content-Type': 'application/json'
@@ -289,7 +289,7 @@ export const Alerts: React.FC = () => {
 
   const handleMarkAsRead = async (id: number) => {
     try {
-      const response = await fetch(`http://localhost:6001/api/alerts/${id}/read`, {
+      const response = await fetch(`/api/alerts/${id}/read`, {
         method: 'PUT',
         headers: {
           'Authorization': `Bearer ${localStorage.getItem('token')}`,
@@ -308,7 +308,7 @@ export const Alerts: React.FC = () => {
 
   const handleMarkAllAsRead = async () => {
     try {
-      const response = await fetch('http://localhost:6001/api/alerts/read-all', {
+      const response = await fetch('/api/alerts/read-all', {
         method: 'PUT',
         headers: {
           'Authorization': `Bearer ${localStorage.getItem('token')}`,
@@ -327,7 +327,7 @@ export const Alerts: React.FC = () => {
 
   const handleDelete = async (id: number) => {
     try {
-      const response = await fetch(`http://localhost:6001/api/alerts/${id}`, {
+      const response = await fetch(`/api/alerts/${id}`, {
         method: 'DELETE',
         headers: {
           'Authorization': `Bearer ${localStorage.getItem('token')}`,
@@ -348,7 +348,7 @@ export const Alerts: React.FC = () => {
     setSettingsLoading(true);
     try {
       const values = await smtpForm.validateFields();
-      const response = await fetch('http://localhost:6001/api/settings/smtp', {
+      const response = await fetch('/api/settings/smtp', {
         method: 'POST',
         headers: {
           'Authorization': `Bearer ${localStorage.getItem('token')}`,
@@ -374,7 +374,7 @@ export const Alerts: React.FC = () => {
     setSettingsLoading(true);
     try {
       const values = await smtpForm.validateFields();
-      const response = await fetch('http://localhost:6001/api/settings/smtp/test', {
+      const response = await fetch('/api/settings/smtp/test', {
         method: 'POST',
         headers: {
           'Authorization': `Bearer ${localStorage.getItem('token')}`,
@@ -399,7 +399,7 @@ export const Alerts: React.FC = () => {
     setTestEmailLoading(true);
     try {
       const values = await testEmailForm.validateFields();
-      const response = await fetch('http://localhost:6001/api/settings/smtp/test-email', {
+      const response = await fetch('/api/settings/smtp/test-email', {
         method: 'POST',
         headers: {
           'Authorization': `Bearer ${localStorage.getItem('token')}`,
@@ -439,14 +439,19 @@ export const Alerts: React.FC = () => {
   const handleSavePreferences = async () => {
     setSettingsLoading(true);
     try {
-      await fetch('http://localhost:6001/api/alerts/preferences', {
-        method: 'PUT',
+      const response = await fetch('/api/alerts/preferences', {
+        method: 'POST',
         headers: {
           'Authorization': `Bearer ${localStorage.getItem('token')}`,
           'Content-Type': 'application/json'
         },
         body: JSON.stringify({ preferences: userPreferences })
       });
+      if (!response.ok) {
+        const errorData = await response.json();
+        message.error(errorData.error || '保存偏好失败');
+        return;
+      }
       message.success('通知偏好已保存');
     } catch (error) {
       message.error('保存偏好失败');
@@ -724,7 +729,6 @@ export const Alerts: React.FC = () => {
               <Form layout="vertical">
                 <Form.Item label="接收以下级别的告警通知">
                   <Select
-                    mode="multiple"
                     value={userPreferences.min_alert_level}
                     onChange={(value) => setUserPreferences({ ...userPreferences, min_alert_level: value })}
                     options={levelOptions}
