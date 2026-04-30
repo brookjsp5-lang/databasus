@@ -262,11 +262,33 @@ export const restoreAPI = {
   create: (data: any): Promise<{ restore: any }> => api.post('/api/restores', data),
   getById: (id: number): Promise<{ restore: any }> => api.get(`/api/restores/${id}`),
   delete: (id: number): Promise<{ message: string }> => api.delete(`/api/restores/${id}`),
-  checkTarget: (data: { backup_id: number; database_id: number; database_type: string }): Promise<{
+  checkTarget: (data: {
+    backup_id: number;
+    database_id?: number;
+    database_type: string;
+    target_kind?: 'original' | 'restore_instance';
+    target_instance_id?: number;
+  }): Promise<{
     is_original_instance: boolean;
     warning_message: string;
     requires_confirmation: boolean;
   }> => api.post('/api/restores/check-target', data),
+};
+
+export const restoreInstanceAPI = {
+  getAll: (): Promise<{ instances: any[] }> => api.get('/api/restore-instances'),
+  create: (data: any): Promise<{ instance: any }> => api.post('/api/restore-instances', data),
+  getById: (id: number): Promise<{ instance: any }> => api.get(`/api/restore-instances/${id}`),
+  update: (id: number, data: any): Promise<{ instance: any }> => api.put(`/api/restore-instances/${id}`, data),
+  delete: (id: number): Promise<{ message: string }> => api.delete(`/api/restore-instances/${id}`),
+  test: (data: {
+    database_type: 'mysql' | 'postgresql';
+    host: string;
+    port: number;
+    user: string;
+    password: string;
+    database_name: string;
+  }): Promise<{ success: boolean; message: string; error?: string }> => api.post('/api/restore-instances/test', data),
 };
 
 // WAL备份相关

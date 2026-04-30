@@ -17,10 +17,10 @@
  */
 
 import React, { useEffect, useState, useCallback, useMemo } from 'react';
-import { Table, Button, Tag, Modal, message, Select, DatePicker, Popconfirm, Progress, Alert, Space, Tooltip, Card, Tabs, Input, Row, Col, Statistic, Descriptions } from 'antd';
-import { RotateCcw, Clock, Loader, CheckCircle, XCircle, AlertTriangle, RefreshCw, Info, Ban, History, FileText, Search, Filter, Database, Download, Server, Timer } from 'lucide-react';
+import { Table, Button, Tag, Modal, message, Select, DatePicker, Progress, Alert, Space, Tooltip, Card, Tabs, Input, Row, Col, Statistic, Descriptions, Form } from 'antd';
+import { RotateCcw, Clock, Loader, CheckCircle, XCircle, AlertTriangle, RefreshCw, Info, Ban, History, FileText, Search, Database, Download, Server, Timer, Plus, Edit2, Trash2, TestTube } from 'lucide-react';
 import dayjs, { Dayjs } from 'dayjs';
-import { restoreAPI, backupAPI } from '../services/api';
+import { restoreAPI, backupAPI, restoreInstanceAPI } from '../services/api';
 import { useWebSocket } from '../hooks/useWebSocket';
 
 interface RestoreRecord {
@@ -29,6 +29,8 @@ interface RestoreRecord {
   database_id: number;
   database_type: string;
   backup_id: number;
+  target_kind?: 'original' | 'restore_instance';
+  target_name?: string;
   pitr_time?: string;
   status: string;
   progress?: number;
@@ -57,6 +59,30 @@ interface Backup {
   file_size?: number;
   backup_time: string;
   created_at: string;
+}
+
+interface RestoreInstance {
+  id: number;
+  workspace_id: number;
+  name: string;
+  database_type: 'mysql' | 'postgresql';
+  host: string;
+  port: number;
+  user: string;
+  database_name: string;
+  engine_version?: string;
+  created_at?: string;
+}
+
+interface RestoreInstanceFormData {
+  name: string;
+  database_type: 'mysql' | 'postgresql';
+  host: string;
+  port: number;
+  user: string;
+  password?: string;
+  database_name: string;
+  engine_version?: string;
 }
 
 interface ProgressUpdate {
@@ -91,12 +117,16 @@ export const Restores: React.FC = () => {
 
   const [restores, setRestores] = useState<RestoreRecord[]>([]);
   const [backups, setBackups] = useState<Backup[]>([]);
+  const [restoreInstances, setRestoreInstances] = useState<RestoreInstance[]>([]);
   const [loading, setLoading] = useState(false);
+  const [instanceLoading, setInstanceLoading] = useState(false);
   const [progressMap, setProgressMap] = useState<Record<number, ProgressUpdate>>({});
 
   const [createModalVisible, setCreateModalVisible] = useState(false);
   const [confirmModalVisible, setConfirmModalVisible] = useState(false);
   const [selectedBackup, setSelectedBackup] = useState<Backup | null>(null);
+  const [targetKind, setTargetKind] = useState<'original' | 'restore_instance'>('original');
+  const [selectedRestoreInstanceId, setSelectedRestoreInstanceId] = useState<number | null>(null);
   const [restoreType, setRestoreType] = useState<'full' | 'pitr'>('full');
   const [pitrTime, setPitrTime] = useState<Dayjs | null>(null);
   const [pitrTimeRange, setPitrTimeRange] = useState<PITRTimeRange | null>(null);
@@ -110,6 +140,11 @@ export const Restores: React.FC = () => {
 
   const [detailModalVisible, setDetailModalVisible] = useState(false);
   const [selectedRecord, setSelectedRecord] = useState<RestoreRecord | null>(null);
+  const [instanceModalVisible, setInstanceModalVisible] = useState(false);
+  const [instanceModalMode, setInstanceModalMode] = useState<'create' | 'edit'>('create');
+  const [editingInstance, setEditingInstance] = useState<RestoreInstance | null>(null);
+  const [testingInstanceConnection, setTestingInstanceConnection] = useState(false);
+  const [instanceForm] = Form.useForm<RestoreInstanceFormData>();
   const [filters, setFilters] = useState<FilterParams>({
     search: '',
     status: null,
@@ -140,6 +175,7 @@ export const Restores: React.FC = () => {
   useEffect(() => {
     fetchRestores();
     fetchBackups();
+    fetchRestoreInstances();
   }, []);
 
   const fetchRestores = async () => {
@@ -151,6 +187,7 @@ export const Restores: React.FC = () => {
         ...r,
         name: r.name || `恢复 #${r.id}`,
         storage_name: r.storage_name || `存储 #${r.storage_id || '-'}`,
+        target: r.target || r.target_name || (r.target_kind === 'restore_instance' ? '恢复实例' : '原实例'),
         operator: r.operator || '系统',
         data_size: r.data_size || r.file_size || 0,
         duration: r.duration || calculateDuration(r.started_at, r.completed_at),
@@ -172,6 +209,19 @@ export const Restores: React.FC = () => {
     }
   };
 
+  const fetchRestoreInstances = async () => {
+    setInstanceLoading(true);
+    try {
+      const data = await restoreInstanceAPI.getAll();
+      setRestoreInstances((data?.instances || []) as RestoreInstance[]);
+    } catch (error) {
+      console.error('Failed to fetch restore instances:', error);
+      message.error('获取恢复实例失败');
+    } finally {
+      setInstanceLoading(false);
+    }
+  };
+
   const calculateDuration = (started?: string, completed?: string): number => {
     if (!started || !completed) return 0;
     return Math.round((new Date(completed).getTime() - new Date(started).getTime()) / 1000);
@@ -181,13 +231,43 @@ export const Restores: React.FC = () => {
     try {
       const response = await restoreAPI.checkTarget({
         backup_id: backup.id,
-        database_id: backup.database_id,
-        database_type: backup.database_type
+        database_id: targetKind === 'original' ? backup.database_id : undefined,
+        database_type: backup.database_type,
+        target_kind: targetKind,
+        target_instance_id: targetKind === 'restore_instance' ? selectedRestoreInstanceId || undefined : undefined,
       });
       setIsOriginalInstance(response.is_original_instance);
       setWarningMessage(response.warning_message || '');
     } catch (error) {
       console.error('Failed to check restore target:', error);
+    }
+  };
+
+  const syncRestoreTargetWarning = async (
+    backup: Backup | null,
+    nextTargetKind: 'original' | 'restore_instance' = targetKind,
+    nextRestoreInstanceId: number | null = selectedRestoreInstanceId,
+  ) => {
+    if (!backup) {
+      setIsOriginalInstance(false);
+      setWarningMessage('');
+      return;
+    }
+
+    try {
+      const response = await restoreAPI.checkTarget({
+        backup_id: backup.id,
+        database_id: nextTargetKind === 'original' ? backup.database_id : undefined,
+        database_type: backup.database_type,
+        target_kind: nextTargetKind,
+        target_instance_id: nextTargetKind === 'restore_instance' ? nextRestoreInstanceId || undefined : undefined,
+      });
+      setIsOriginalInstance(response.is_original_instance);
+      setWarningMessage(response.warning_message || '');
+    } catch (error) {
+      console.error('Failed to sync restore target warning:', error);
+      setIsOriginalInstance(false);
+      setWarningMessage('');
     }
   };
 
@@ -231,11 +311,35 @@ export const Restores: React.FC = () => {
     const backup = option as Backup;
     setSelectedBackup(backup);
     setBackupValid(null);
-    await checkRestoreTarget(backup);
+    let nextRestoreInstanceId = selectedRestoreInstanceId;
+    if (
+      targetKind === 'restore_instance' &&
+      selectedRestoreInstanceId &&
+      !restoreInstances.some((instance) => instance.id === selectedRestoreInstanceId && instance.database_type === backup.database_type)
+    ) {
+      setSelectedRestoreInstanceId(null);
+      nextRestoreInstanceId = null;
+    }
+    await syncRestoreTargetWarning(backup, targetKind, nextRestoreInstanceId);
     await validateBackup(backup.id, backup.database_type);
     if (restoreType === 'pitr') {
       await fetchPITRTimeRange(backup.id, backup.database_type);
     }
+  };
+
+  const handleTargetKindChange = async (value: 'original' | 'restore_instance') => {
+    setTargetKind(value);
+    if (value === 'original') {
+      setSelectedRestoreInstanceId(null);
+      await syncRestoreTargetWarning(selectedBackup, value, null);
+      return;
+    }
+    await syncRestoreTargetWarning(selectedBackup, value, selectedRestoreInstanceId);
+  };
+
+  const handleSelectRestoreInstance = async (value: number) => {
+    setSelectedRestoreInstanceId(value);
+    await syncRestoreTargetWarning(selectedBackup, 'restore_instance', value);
   };
 
   const handleRestoreTypeChange = (value: 'full' | 'pitr') => {
@@ -253,6 +357,10 @@ export const Restores: React.FC = () => {
       message.warning('请选择备份');
       return;
     }
+    if (targetKind === 'restore_instance' && !selectedRestoreInstanceId) {
+      message.warning('请选择恢复实例');
+      return;
+    }
     if (restoreType === 'pitr' && !pitrTime) {
       message.warning('请选择PITR恢复时间点');
       return;
@@ -260,11 +368,16 @@ export const Restores: React.FC = () => {
     try {
       const restoreData: any = {
         workspace_id: 1,
-        database_id: selectedBackup.database_id,
         database_type: selectedBackup.database_type,
         backup_id: selectedBackup.id,
         backup_before_restore: backupBeforeRestore,
+        target_kind: targetKind,
       };
+      if (targetKind === 'original') {
+        restoreData.database_id = selectedBackup.database_id;
+      } else {
+        restoreData.target_instance_id = selectedRestoreInstanceId;
+      }
       if (restoreType === 'pitr' && pitrTime) {
         restoreData.pitr_time = pitrTime.toISOString();
       }
@@ -304,6 +417,8 @@ export const Restores: React.FC = () => {
 
   const resetCreateForm = () => {
     setSelectedBackup(null);
+    setTargetKind('original');
+    setSelectedRestoreInstanceId(null);
     setPitrTime(null);
     setPitrTimeRange(null);
     setIsOriginalInstance(false);
@@ -311,6 +426,92 @@ export const Restores: React.FC = () => {
     setConfirmRestore(false);
     setPendingRestoreData(null);
     setBackupValid(null);
+  };
+
+  const openCreateInstanceModal = () => {
+    setInstanceModalMode('create');
+    setEditingInstance(null);
+    instanceForm.resetFields();
+    instanceForm.setFieldsValue({ database_type: 'mysql', port: 3306 });
+    setInstanceModalVisible(true);
+  };
+
+  const openEditInstanceModal = (instance: RestoreInstance) => {
+    setInstanceModalMode('edit');
+    setEditingInstance(instance);
+    instanceForm.setFieldsValue({
+      ...instance,
+      password: '',
+    });
+    setInstanceModalVisible(true);
+  };
+
+  const handleRestoreInstanceTypeChange = (value: 'mysql' | 'postgresql') => {
+    instanceForm.setFieldValue('database_type', value);
+    instanceForm.setFieldValue('port', value === 'mysql' ? 3306 : 5432);
+    instanceForm.setFieldValue('engine_version', value === 'mysql' ? '8.0' : '16');
+  };
+
+  const handleTestRestoreInstance = async () => {
+    try {
+      const values = await instanceForm.validateFields();
+      if (!values.password && instanceModalMode === 'edit') {
+        message.warning('编辑模式下测试连接需要重新输入密码');
+        return;
+      }
+      setTestingInstanceConnection(true);
+      await restoreInstanceAPI.test({
+        database_type: values.database_type,
+        host: values.host,
+        port: values.port,
+        user: values.user,
+        password: values.password || '',
+        database_name: values.database_name,
+      });
+      message.success('恢复实例连接测试成功');
+    } catch (error: any) {
+      if (error?.errorFields) {
+        return;
+      }
+      message.error(error?.response?.data?.error || '恢复实例连接测试失败');
+    } finally {
+      setTestingInstanceConnection(false);
+    }
+  };
+
+  const handleSubmitRestoreInstance = async () => {
+    try {
+      const values = await instanceForm.validateFields();
+      if (instanceModalMode === 'create') {
+        await restoreInstanceAPI.create({ ...values, workspace_id: 1 });
+        message.success('恢复实例创建成功');
+      } else if (editingInstance) {
+        await restoreInstanceAPI.update(editingInstance.id, values);
+        message.success('恢复实例更新成功');
+      }
+      setInstanceModalVisible(false);
+      setEditingInstance(null);
+      instanceForm.resetFields();
+      fetchRestoreInstances();
+    } catch (error: any) {
+      if (error?.errorFields) {
+        return;
+      }
+      message.error(error?.response?.data?.error || '保存恢复实例失败');
+    }
+  };
+
+  const handleDeleteRestoreInstance = async (instance: RestoreInstance) => {
+    try {
+      await restoreInstanceAPI.delete(instance.id);
+      message.success('恢复实例已删除');
+      if (selectedRestoreInstanceId === instance.id) {
+        setSelectedRestoreInstanceId(null);
+      }
+      fetchRestoreInstances();
+    } catch (error) {
+      message.error('删除恢复实例失败');
+    }
   };
 
   const handleConfirmRestore = async () => {
@@ -400,6 +601,13 @@ export const Restores: React.FC = () => {
     });
   }, [restores, filters]);
 
+  const filteredRestoreInstances = useMemo(() => {
+    if (!selectedBackup) {
+      return restoreInstances;
+    }
+    return restoreInstances.filter((instance) => instance.database_type === selectedBackup.database_type);
+  }, [restoreInstances, selectedBackup]);
+
   const handleViewDetail = (record: RestoreRecord) => {
     setSelectedRecord(record);
     setDetailModalVisible(true);
@@ -468,6 +676,54 @@ export const Restores: React.FC = () => {
         <Space>
           <Tooltip title="查看详情">
             <Button type="text" icon={<Info size={14} />} onClick={() => handleViewDetail(record)} />
+          </Tooltip>
+        </Space>
+      )
+    }
+  ];
+
+  const restoreInstanceColumns = [
+    { title: '名称', dataIndex: 'name', key: 'name', render: (name: string) => <span className="font-medium">{name}</span> },
+    { title: '类型', dataIndex: 'database_type', key: 'database_type', width: 120, render: (type: string) => <Tag color={type === 'mysql' ? 'blue' : 'green'}>{type === 'mysql' ? 'MySQL' : 'PostgreSQL'}</Tag> },
+    { title: '连接地址', key: 'host', render: (_: any, record: RestoreInstance) => <span className="text-sm text-secondary">{record.host}:{record.port}</span> },
+    { title: '数据库名', dataIndex: 'database_name', key: 'database_name' },
+    { title: '用户名', dataIndex: 'user', key: 'user' },
+    { title: '创建时间', dataIndex: 'created_at', key: 'created_at', width: 180, render: (value?: string) => value ? new Date(value).toLocaleString('zh-CN') : '-' },
+    {
+      title: '操作',
+      key: 'action',
+      width: 180,
+      render: (_: any, record: RestoreInstance) => (
+        <Space>
+          <Tooltip title="编辑恢复实例">
+            <Button type="text" icon={<Edit2 size={14} />} onClick={() => openEditInstanceModal(record)} />
+          </Tooltip>
+          <Tooltip title="测试连接">
+            <Button
+              type="text"
+              icon={<TestTube size={14} />}
+              onClick={async () => {
+                instanceForm.setFieldsValue({ ...record, password: '' });
+                openEditInstanceModal(record);
+              }}
+            />
+          </Tooltip>
+          <Tooltip title="删除恢复实例">
+            <Button
+              type="text"
+              danger
+              icon={<Trash2 size={14} />}
+              onClick={() =>
+                Modal.confirm({
+                  title: '删除恢复实例',
+                  content: `确定删除恢复实例“${record.name}”吗？`,
+                  okText: '删除',
+                  okButtonProps: { danger: true },
+                  cancelText: '取消',
+                  onOk: () => handleDeleteRestoreInstance(record),
+                })
+              }
+            />
           </Tooltip>
         </Space>
       )
@@ -565,6 +821,31 @@ export const Restores: React.FC = () => {
           <Table columns={recordColumns} dataSource={filteredRecords} rowKey="id" loading={loading} pagination={{ pageSize: 10, showSizeChanger: true, showQuickJumper: true, showTotal: (total) => `共 ${total} 条记录` }} scroll={{ x: 1200 }} />
         </div>
       )
+    },
+    {
+      key: 'instances',
+      label: <span className="flex items-center gap-2"><Server size={16} />恢复实例</span>,
+      children: (
+        <div>
+          <div className="flex justify-between items-center mb-4">
+            <div>
+              <h3 className="text-lg font-semibold">恢复实例管理</h3>
+              <p className="text-sm text-secondary">维护可用于 PITR 恢复的目标实例，仅包含连接设置与连接测试</p>
+            </div>
+            <Space>
+              <Button icon={<RefreshCw size={16} />} onClick={fetchRestoreInstances}>刷新</Button>
+              <Button type="primary" icon={<Plus size={16} />} onClick={openCreateInstanceModal}>新增恢复实例</Button>
+            </Space>
+          </div>
+          <Table
+            columns={restoreInstanceColumns}
+            dataSource={restoreInstances}
+            rowKey="id"
+            loading={instanceLoading}
+            pagination={{ pageSize: 10 }}
+          />
+        </div>
+      )
     }
   ];
 
@@ -585,7 +866,14 @@ export const Restores: React.FC = () => {
         onCancel={() => { setCreateModalVisible(false); resetCreateForm(); }}
         footer={[
           <Button key="cancel" onClick={() => setCreateModalVisible(false)}>取消</Button>,
-          <Button key="create" type="primary" onClick={handleCreateRestore} disabled={!selectedBackup || (restoreType === 'pitr' && !pitrTime)}>创建恢复任务</Button>
+          <Button
+            key="create"
+            type="primary"
+            onClick={handleCreateRestore}
+            disabled={!selectedBackup || (targetKind === 'restore_instance' && !selectedRestoreInstanceId) || (restoreType === 'pitr' && !pitrTime)}
+          >
+            创建恢复任务
+          </Button>
         ]}
         width={650}
       >
@@ -606,6 +894,45 @@ export const Restores: React.FC = () => {
           {backupValid === true && <div className="mt-2 text-sm text-success flex items-center gap-1"><CheckCircle size={14} /> 备份文件验证通过</div>}
           {backupValid === false && <div className="mt-2 text-sm text-danger flex items-center gap-1"><XCircle size={14} /> 备份文件验证失败</div>}
         </div>
+
+        <div className="mb-6">
+          <label className="form-label">恢复目标</label>
+          <Select
+            className="w-full"
+            value={targetKind}
+            onChange={handleTargetKindChange}
+            options={[
+              { label: '恢复到原实例', value: 'original' },
+              { label: '恢复到恢复实例', value: 'restore_instance' },
+            ]}
+          />
+          <div className="mt-2 text-xs text-secondary">
+            {targetKind === 'original'
+              ? '将恢复到备份文件所属的原数据库实例，系统会进行风险提醒。'
+              : '将恢复到你维护的恢复实例，不会触发原实例覆盖提醒。'}
+          </div>
+        </div>
+
+        {targetKind === 'restore_instance' && (
+          <div className="mb-6">
+            <label className="form-label">选择恢复实例</label>
+            <Select
+              className="w-full"
+              placeholder={selectedBackup ? '请选择与备份类型一致的恢复实例' : '请先选择备份'}
+              value={selectedRestoreInstanceId ?? undefined}
+              onChange={handleSelectRestoreInstance}
+              disabled={!selectedBackup}
+              options={filteredRestoreInstances.map((instance) => ({
+                label: `${instance.name} (${instance.host}:${instance.port}/${instance.database_name})`,
+                value: instance.id,
+              }))}
+            />
+            <div className="mt-2 flex justify-between items-center">
+              <span className="text-xs text-secondary">仅展示与当前备份数据库类型一致的恢复实例</span>
+              <Button type="link" size="small" onClick={() => { setActiveTab('instances'); openCreateInstanceModal(); }}>没有合适实例？立即新增</Button>
+            </div>
+          </div>
+        )}
 
         {isOriginalInstance && warningMessage && (
           <Alert type="warning" message="危险操作警告" description={warningMessage} icon={<AlertTriangle size={20} />} showIcon className="mb-4" />
@@ -655,15 +982,106 @@ export const Restores: React.FC = () => {
           </label>
         </div>
 
-        <div className="bg-danger bg-opacity-10 p-4 rounded-lg border border-danger border-opacity-20">
+        <div className={`${targetKind === 'original' ? 'bg-danger' : 'bg-info'} bg-opacity-10 p-4 rounded-lg border ${targetKind === 'original' ? 'border-danger' : 'border-info'} border-opacity-20`}>
           <div className="flex items-start gap-3">
-            <AlertTriangle size={20} className="text-danger flex-shrink-0 mt-0.5" />
+            <AlertTriangle size={20} className={`${targetKind === 'original' ? 'text-danger' : 'text-info'} flex-shrink-0 mt-0.5`} />
             <div>
-              <p className="text-sm font-semibold text-danger mb-1">风险提示</p>
-              <p className="text-sm text-secondary">恢复操作将覆盖当前数据库内容，此操作不可逆。请谨慎操作。</p>
+              <p className={`text-sm font-semibold ${targetKind === 'original' ? 'text-danger' : 'text-info'} mb-1`}>
+                {targetKind === 'original' ? '风险提示' : '目标实例说明'}
+              </p>
+              <p className="text-sm text-secondary">
+                {targetKind === 'original'
+                  ? '恢复操作将覆盖当前数据库内容，此操作不可逆。请谨慎操作。'
+                  : '恢复将写入所选恢复实例，不会覆盖备份源原实例，但仍建议确认目标实例为空闲或可覆盖。'}
+              </p>
             </div>
           </div>
         </div>
+      </Modal>
+
+      <Modal
+        title={instanceModalMode === 'create' ? '新增恢复实例' : `编辑恢复实例：${editingInstance?.name || ''}`}
+        open={instanceModalVisible}
+        onCancel={() => {
+          setInstanceModalVisible(false);
+          setEditingInstance(null);
+          instanceForm.resetFields();
+        }}
+        onOk={handleSubmitRestoreInstance}
+        okText={instanceModalMode === 'create' ? '创建' : '保存'}
+        cancelText="取消"
+        width={620}
+        footer={[
+          <Button key="test" icon={<TestTube size={14} />} loading={testingInstanceConnection} onClick={handleTestRestoreInstance}>
+            测试连接
+          </Button>,
+          <Button key="cancel" onClick={() => {
+            setInstanceModalVisible(false);
+            setEditingInstance(null);
+            instanceForm.resetFields();
+          }}>
+            取消
+          </Button>,
+          <Button key="submit" type="primary" onClick={handleSubmitRestoreInstance}>
+            {instanceModalMode === 'create' ? '创建' : '保存'}
+          </Button>,
+        ]}
+      >
+        <Form form={instanceForm} layout="vertical" initialValues={{ database_type: 'mysql', port: 3306, engine_version: '8.0' }}>
+          <Form.Item name="name" label="实例名称" rules={[{ required: true, message: '请输入实例名称' }]}>
+            <Input placeholder="例如：MySQL恢复实例A" />
+          </Form.Item>
+          <Form.Item name="database_type" label="数据库类型" rules={[{ required: true, message: '请选择数据库类型' }]}>
+            <Select
+              onChange={handleRestoreInstanceTypeChange}
+              options={[
+                { label: 'MySQL', value: 'mysql' },
+                { label: 'PostgreSQL', value: 'postgresql' },
+              ]}
+            />
+          </Form.Item>
+          <Row gutter={12}>
+            <Col span={16}>
+              <Form.Item name="host" label="主机地址" rules={[{ required: true, message: '请输入主机地址' }]}>
+                <Input placeholder="127.0.0.1" />
+              </Form.Item>
+            </Col>
+            <Col span={8}>
+              <Form.Item name="port" label="端口" rules={[{ required: true, message: '请输入端口' }]}>
+                <Input type="number" />
+              </Form.Item>
+            </Col>
+          </Row>
+          <Row gutter={12}>
+            <Col span={12}>
+              <Form.Item name="user" label="用户名" rules={[{ required: true, message: '请输入用户名' }]}>
+                <Input placeholder="root" />
+              </Form.Item>
+            </Col>
+            <Col span={12}>
+              <Form.Item
+                name="password"
+                label="密码"
+                rules={instanceModalMode === 'create' ? [{ required: true, message: '请输入密码' }] : []}
+                extra={instanceModalMode === 'edit' ? '留空表示保持原密码不变；测试连接时需重新输入密码' : undefined}
+              >
+                <Input.Password placeholder="请输入密码" />
+              </Form.Item>
+            </Col>
+          </Row>
+          <Row gutter={12}>
+            <Col span={14}>
+              <Form.Item name="database_name" label="数据库名" rules={[{ required: true, message: '请输入数据库名' }]}>
+                <Input placeholder="target_db" />
+              </Form.Item>
+            </Col>
+            <Col span={10}>
+              <Form.Item name="engine_version" label="版本">
+                <Input placeholder="8.0 / 16" />
+              </Form.Item>
+            </Col>
+          </Row>
+        </Form>
       </Modal>
 
       <Modal

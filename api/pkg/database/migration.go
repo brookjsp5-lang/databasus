@@ -36,6 +36,7 @@ func autoMigrate(db *gorm.DB) error {
 		&models.Storage{},
 		&models.Backup{},
 		&models.Restore{},
+		&models.RestoreInstance{},
 		&models.BackupConfig{},
 		&models.Task{},
 		&models.Alert{},

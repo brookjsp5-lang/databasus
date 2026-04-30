@@ -122,23 +122,46 @@ func (h *AlertHandler) GetUnreadCount(c *gin.Context) {
 }
 
 type AlertPreferences struct {
-	EmailEnabled  bool `json:"email_enabled"`
-	WebhookEnabled bool `json:"webhook_enabled"`
-	SlackEnabled  bool `json:"slack_enabled"`
-	TelegramEnabled bool `json:"telegram_enabled"`
-	NotifyOnSuccess bool `json:"notify_on_success"`
-	NotifyOnFailure bool `json:"notify_on_failure"`
-	NotifyOnWarning bool `json:"notify_on_warning"`
+	EmailEnabled    bool   `json:"email_enabled"`
+	DingtalkEnabled bool   `json:"dingtalk_enabled"`
+	WechatEnabled   bool   `json:"wechat_enabled"`
+	MinAlertLevel   string `json:"min_alert_level"`
+	AlertFrequency  string `json:"alert_frequency"`
+}
+
+type alertPreferencesRequest struct {
+	Preferences *AlertPreferences `json:"preferences"`
+	AlertPreferences
+}
+
+func getWorkspaceID(c *gin.Context) uint {
+	workspaceID := c.Query("workspace_id")
+	if workspaceID == "" {
+		return 1
+	}
+
+	id, err := strconv.ParseUint(workspaceID, 10, 32)
+	if err != nil || id == 0 {
+		return 1
+	}
+
+	return uint(id)
+}
+
+func defaultAlertPreferences() AlertPreferences {
+	return AlertPreferences{
+		EmailEnabled:    true,
+		DingtalkEnabled: false,
+		WechatEnabled:   false,
+		MinAlertLevel:   "warning",
+		AlertFrequency:  "immediate",
+	}
 }
 
 func (h *AlertHandler) GetPreferences(c *gin.Context) {
-	workspaceID := c.Query("workspace_id")
-	if workspaceID == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "workspace_id is required"})
-		return
-	}
+	workspaceID := getWorkspaceID(c)
 
-	var prefs AlertPreferences
+	prefs := defaultAlertPreferences()
 	var setting models.SystemSetting
 
 	if err := h.db.Where("key = ? AND workspace_id = ?", "alert_preferences", workspaceID).First(&setting).Error; err == nil {
@@ -151,25 +174,26 @@ func (h *AlertHandler) GetPreferences(c *gin.Context) {
 }
 
 func (h *AlertHandler) SavePreferences(c *gin.Context) {
-	workspaceID := c.Query("workspace_id")
-	if workspaceID == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "workspace_id is required"})
+	workspaceID := getWorkspaceID(c)
+
+	var req alertPreferencesRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request body"})
 		return
 	}
 
-	var prefs AlertPreferences
-	if err := c.ShouldBindJSON(&prefs); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request body"})
-		return
+	prefs := req.AlertPreferences
+	if req.Preferences != nil {
+		prefs = *req.Preferences
 	}
 
 	prefsJSON, _ := json.Marshal(prefs)
 
 	setting := models.SystemSetting{
-		Key:       "alert_preferences",
-		Value:     string(prefsJSON),
-		Type:      "json",
-		WorkspaceID: func() uint { id, _ := strconv.ParseUint(workspaceID, 10, 32); return uint(id) }(),
+		Key:         "alert_preferences",
+		Value:       string(prefsJSON),
+		Type:        "json",
+		WorkspaceID: workspaceID,
 	}
 
 	h.db.Where("key = ? AND workspace_id = ?", "alert_preferences", workspaceID).Assign(&setting).FirstOrCreate(&setting)

@@ -17,9 +17,10 @@
  */
 
 import React, { useEffect, useState } from 'react';
-import { Table, Button, Tag, message, Space, Card, Badge, Form, Input, Switch, Tabs, Select, Tooltip, Alert } from 'antd';
-import { Bell, Check, Trash2, Eye, AlertTriangle, AlertCircle, Info, CheckCircle, Mail, MessageSquare, Settings, Volume2, Send, Loader, Shield, Lock } from 'lucide-react';
+import { Table, Button, Tag, message, Space, Card, Badge, Form, Input, Switch, Tabs, Select, Alert } from 'antd';
+import { Bell, Check, Trash2, Eye, AlertTriangle, AlertCircle, Info, CheckCircle, Mail, MessageSquare, Settings, Volume2, Send, Shield } from 'lucide-react';
 import { settingsAPI } from '../services/api';
+import { useWorkspaceStore } from '../store';
 
 /**
  * 告警记录接口
@@ -140,13 +141,23 @@ const commonSMTPPorts: Record<string, number> = {
   starttls: 587,
 };
 
+const defaultUserPreferences: UserPreferences = {
+  email_enabled: true,
+  dingtalk_enabled: false,
+  wechat_enabled: false,
+  min_alert_level: 'warning',
+  alert_frequency: 'immediate',
+};
+
 export const Alerts: React.FC = () => {
+  const { currentWorkspace } = useWorkspaceStore();
+  const currentWorkspaceId = currentWorkspace?.id ?? 1;
   const [activeTab, setActiveTab] = useState('alerts');
   const [alerts, setAlerts] = useState<Alert[]>([]);
   const [loading, setLoading] = useState(true);
   const [unreadCount, setUnreadCount] = useState(0);
   const [settingsLoading, setSettingsLoading] = useState(false);
-  const [smtpLoading, setSmtpLoading] = useState(false);
+  const [, setSmtpLoading] = useState(false);
   const [testEmailLoading, setTestEmailLoading] = useState(false);
   const [smtpForm] = Form.useForm();
   const [testEmailForm] = Form.useForm();
@@ -173,13 +184,7 @@ export const Alerts: React.FC = () => {
     alert_frequency: 'immediate',
   });
 
-  const [userPreferences, setUserPreferences] = useState<UserPreferences>({
-    email_enabled: true,
-    dingtalk_enabled: false,
-    wechat_enabled: false,
-    min_alert_level: 'warning',
-    alert_frequency: 'immediate',
-  });
+  const [userPreferences, setUserPreferences] = useState<UserPreferences>(defaultUserPreferences);
 
   useEffect(() => {
     fetchAlerts();
@@ -187,7 +192,7 @@ export const Alerts: React.FC = () => {
     fetchSMTPConfig();
     fetchAlertSettings();
     fetchUserPreferences();
-  }, []);
+  }, [currentWorkspaceId]);
 
   const fetchAlerts = async () => {
     setLoading(true);
@@ -253,16 +258,17 @@ export const Alerts: React.FC = () => {
   const fetchAlertSettings = async () => {
     try {
       const data = await settingsAPI.getAlertSettings();
-      if (data) {
+      const settings = data?.settings || data;
+      if (settings) {
         setAlertSettings({
-          alert_email_enabled: data.alert_email_enabled || false,
-          alert_email: data.alert_email || '',
-          alert_dingtalk_enabled: data.alert_dingtalk_enabled || false,
-          alert_dingtalk_webhook: data.alert_dingtalk_webhook || '',
-          alert_wechat_enabled: data.alert_wechat_enabled || false,
-          alert_wechat_webhook: data.alert_wechat_webhook || '',
-          alert_levels: data.alert_levels || ['warning', 'error'],
-          alert_frequency: data.alert_frequency || 'immediate',
+          alert_email_enabled: settings.alert_email_enabled || false,
+          alert_email: settings.alert_email || '',
+          alert_dingtalk_enabled: settings.alert_dingtalk_enabled || false,
+          alert_dingtalk_webhook: settings.alert_dingtalk_webhook || '',
+          alert_wechat_enabled: settings.alert_wechat_enabled || false,
+          alert_wechat_webhook: settings.alert_wechat_webhook || '',
+          alert_levels: settings.alert_levels || ['warning', 'error'],
+          alert_frequency: settings.alert_frequency || 'immediate',
         });
       }
     } catch (error) {
@@ -272,7 +278,7 @@ export const Alerts: React.FC = () => {
 
   const fetchUserPreferences = async () => {
     try {
-      const response = await fetch('/api/alerts/preferences', {
+      const response = await fetch(`/api/alerts/preferences?workspace_id=${currentWorkspaceId}`, {
         headers: {
           'Authorization': `Bearer ${localStorage.getItem('token')}`,
           'Content-Type': 'application/json'
@@ -280,7 +286,10 @@ export const Alerts: React.FC = () => {
       });
       if (response.ok) {
         const data = await response.json();
-        setUserPreferences(data.preferences || userPreferences);
+        setUserPreferences({
+          ...defaultUserPreferences,
+          ...(data.preferences || {}),
+        });
       }
     } catch (error) {
       console.error('Failed to fetch user preferences:', error);
@@ -424,22 +433,7 @@ export const Alerts: React.FC = () => {
   const handleSaveNotificationSettings = async () => {
     setSettingsLoading(true);
     try {
-      await settingsAPI.setAlertSettings({
-        ...alertSettings,
-        preferences: userPreferences
-      });
-      message.success('通知设置已保存');
-    } catch (error) {
-      message.error('保存通知设置失败');
-    } finally {
-      setSettingsLoading(false);
-    }
-  };
-
-  const handleSavePreferences = async () => {
-    setSettingsLoading(true);
-    try {
-      const response = await fetch('/api/alerts/preferences', {
+      const preferencesResponse = await fetch(`/api/alerts/preferences?workspace_id=${currentWorkspaceId}`, {
         method: 'POST',
         headers: {
           'Authorization': `Bearer ${localStorage.getItem('token')}`,
@@ -447,14 +441,17 @@ export const Alerts: React.FC = () => {
         },
         body: JSON.stringify({ preferences: userPreferences })
       });
-      if (!response.ok) {
-        const errorData = await response.json();
-        message.error(errorData.error || '保存偏好失败');
+
+      if (!preferencesResponse.ok) {
+        const errorData = await preferencesResponse.json();
+        message.error(errorData.error || '保存通知偏好失败');
         return;
       }
-      message.success('通知偏好已保存');
+
+      await settingsAPI.setAlertSettings(alertSettings);
+      message.success('通知设置已保存');
     } catch (error) {
-      message.error('保存偏好失败');
+      message.error('保存通知设置失败');
     } finally {
       setSettingsLoading(false);
     }

@@ -114,6 +114,14 @@ func SetupRoutes(router *gin.Engine, db *gorm.DB, redisClient *redis.Client, cfg
 		apiGroup.GET("/restores/pitr-time-range", restoreHandler.GetPITRTimeRange)
 		apiGroup.GET("/restores/restoreable-backups", restoreHandler.ListRestoreableBackups)
 
+		restoreInstanceHandler := NewRestoreInstanceHandler(db)
+		apiGroup.GET("/restore-instances", restoreInstanceHandler.GetAll)
+		apiGroup.POST("/restore-instances", restoreInstanceHandler.Create)
+		apiGroup.GET("/restore-instances/:id", restoreInstanceHandler.GetByID)
+		apiGroup.PUT("/restore-instances/:id", restoreInstanceHandler.Update)
+		apiGroup.DELETE("/restore-instances/:id", restoreInstanceHandler.Delete)
+		apiGroup.POST("/restore-instances/test", restoreInstanceHandler.TestConnection)
+
 		backupConfigHandler := NewBackupConfigHandler(db)
 		apiGroup.GET("/backup-configs", backupConfigHandler.GetAll)
 		apiGroup.POST("/backup-configs", backupConfigHandler.Create)

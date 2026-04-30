@@ -9,9 +9,40 @@
  */
 
 import React, { useEffect, useState, useCallback } from 'react';
-import { Table, Button, Tag, Modal, Form, Input, Select, Popconfirm, Progress, message, Space, Card, Tabs, Tooltip } from 'antd';
-import { Database, HardDrive, Plus, Trash2, Loader, CheckCircle, XCircle, Clock, RefreshCw, Edit2, TestTube } from 'lucide-react';
-import { backupAPI, mysqlDatabaseAPI, postgresqlDatabaseAPI } from '../services/api';
+import {
+  Table,
+  Button,
+  Tag,
+  Modal,
+  Form,
+  Input,
+  Popconfirm,
+  Progress,
+  message,
+  Space,
+  Card,
+  Tabs,
+  Tooltip,
+  Drawer,
+  Descriptions,
+  Divider,
+  Empty,
+} from 'antd';
+import {
+  Database,
+  HardDrive,
+  Plus,
+  Trash2,
+  Loader,
+  CheckCircle,
+  XCircle,
+  Clock,
+  RefreshCw,
+  Edit2,
+  TestTube,
+  Eye,
+} from 'lucide-react';
+import { backupAPI, backupConfigAPI, mysqlDatabaseAPI, postgresqlDatabaseAPI, storageAPI } from '../services/api';
 import { useWebSocket } from '../hooks/useWebSocket';
 import { DatabaseWizard } from './DatabaseWizard';
 
@@ -23,7 +54,60 @@ interface DatabaseRecord {
   port: number;
   user: string;
   username?: string;
+  database_name?: string;
+  engine_version?: string;
+  is_physical_backup_supported?: boolean;
+  binary_log_enabled?: boolean;
+  binary_log_path?: string;
+  xtrabackup_path?: string;
+  wal_enabled?: boolean;
+  wal_path?: string;
   created_at: string;
+}
+
+interface BackupConfigRecord {
+  id: number;
+  name: string;
+  workspace_id: number;
+  database_id: number;
+  database_type: string;
+  storage_id: number;
+  backup_type: string;
+  schedule_type: string;
+  cron_expression: string;
+  retention_type: string;
+  retention_days: number;
+  retention_count: number;
+  compress: boolean;
+  compress_level: number;
+  encryption_enabled: boolean;
+  encryption_key?: string;
+  email_enabled: boolean;
+  email?: string;
+  webhook_enabled: boolean;
+  webhook_url?: string;
+  notify_on_success: boolean;
+  notify_on_failure: boolean;
+  is_enabled?: boolean;
+  enabled?: boolean;
+  gfs_tier_enabled?: boolean;
+  gfs_son_enabled?: boolean;
+  gfs_son_retention_days?: number;
+  gfs_father_enabled?: boolean;
+  gfs_father_retention_weeks?: number;
+  gfs_grandfather_enabled?: boolean;
+  gfs_grandfather_retention_months?: number;
+  created_at?: string;
+  updated_at?: string;
+}
+
+interface StorageRecord {
+  id: number;
+  name: string;
+  type: string;
+  config: Record<string, any> | string;
+  created_at?: string;
+  updated_at?: string;
 }
 
 interface BackupRecord {
@@ -60,6 +144,50 @@ const backupTypeLabels: Record<string, string> = {
   logical: '逻辑备份',
 };
 
+const scheduleTypeLabels: Record<string, string> = {
+  hourly: '按小时',
+  daily: '按天',
+  weekly: '按周',
+  monthly: '按月',
+  cron: 'Cron表达式',
+};
+
+const retentionTypeLabels: Record<string, string> = {
+  time: '按时间保留',
+  count: '按数量保留',
+};
+
+const storageTypeLabels: Record<string, string> = {
+  local: '本地存储',
+  s3: 'S3兼容存储',
+  nas: 'NAS存储',
+};
+
+const parseStorageConfig = (config: StorageRecord['config']): Record<string, any> => {
+  if (!config) return {};
+  if (typeof config === 'string') {
+    try {
+      return JSON.parse(config);
+    } catch {
+      return {};
+    }
+  }
+  return config;
+};
+
+const formatDateTime = (value?: string) => {
+  if (!value) return '-';
+  return new Date(value).toLocaleString('zh-CN');
+};
+
+const formatBoolean = (value?: boolean) => value ? '已启用' : '未启用';
+
+const maskSecret = (value?: string) => {
+  if (!value) return '未配置';
+  if (value.length <= 8) return '******';
+  return `${value.slice(0, 4)}******${value.slice(-2)}`;
+};
+
 export const BackupCenter: React.FC = () => {
   const [activeTab, setActiveTab] = useState('databases');
 
@@ -74,6 +202,11 @@ export const BackupCenter: React.FC = () => {
   const [editModalVisible, setEditModalVisible] = useState(false);
   const [editForm] = Form.useForm();
   const [editingDb, setEditingDb] = useState<DatabaseRecord | null>(null);
+  const [detailVisible, setDetailVisible] = useState(false);
+  const [detailLoading, setDetailLoading] = useState(false);
+  const [selectedDb, setSelectedDb] = useState<DatabaseRecord | null>(null);
+  const [selectedConfigs, setSelectedConfigs] = useState<BackupConfigRecord[]>([]);
+  const [storages, setStorages] = useState<StorageRecord[]>([]);
 
 
   const handleProgressUpdate = useCallback((data: any) => {
@@ -129,6 +262,19 @@ export const BackupCenter: React.FC = () => {
     }
   };
 
+  const getBackupConfigs = async (): Promise<BackupConfigRecord[]> => {
+    const data = await backupConfigAPI.getAll();
+    return (data?.configs || []) as BackupConfigRecord[];
+  };
+
+  const getStorages = async (): Promise<StorageRecord[]> => {
+    const data = await storageAPI.getAll();
+    return ((data?.storages || []) as StorageRecord[]).map((storage) => ({
+      ...storage,
+      config: parseStorageConfig(storage.config),
+    }));
+  };
+
   const handleUpdateDatabase = async () => {
     if (!editingDb) return;
     try {
@@ -175,6 +321,37 @@ export const BackupCenter: React.FC = () => {
     }
   };
 
+  const handleOpenDetail = async (db: DatabaseRecord) => {
+    setDetailVisible(true);
+    setDetailLoading(true);
+    try {
+      const api = db.database_type === 'mysql' ? mysqlDatabaseAPI : postgresqlDatabaseAPI;
+      const [databaseDetail, backupConfigList, storageList] = await Promise.all([
+        api.getById(db.id),
+        getBackupConfigs(),
+        getStorages(),
+      ]);
+
+      setSelectedDb({
+        ...(databaseDetail?.database || db),
+        database_type: db.database_type,
+      } as DatabaseRecord);
+      setSelectedConfigs(
+        backupConfigList.filter(
+          (config) => config.database_id === db.id && config.database_type === db.database_type
+        )
+      );
+      setStorages(storageList);
+    } catch (error) {
+      message.error('获取数据库详情失败');
+      setSelectedDb(db);
+      setSelectedConfigs([]);
+      setStorages([]);
+    } finally {
+      setDetailLoading(false);
+    }
+  };
+
   const handleDeleteBackup = async (id: number) => {
     try {
       await backupAPI.delete(id);
@@ -201,12 +378,129 @@ export const BackupCenter: React.FC = () => {
     message.success('数据库添加成功！已自动配置备份计划。');
   };
 
+  const renderStorageConfig = (config: BackupConfigRecord) => {
+    const storage = storages.find((item) => item.id === config.storage_id);
+    if (!storage) {
+      return <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="未关联存储配置" />;
+    }
+
+    const storageConfig = parseStorageConfig(storage.config);
+    const storageDetails: Array<{ label: string; value: string }> = [
+      { label: '存储名称', value: storage.name },
+      { label: '存储类型', value: storageTypeLabels[storage.type] || storage.type },
+    ];
+
+    if (storage.type === 'local') {
+      storageDetails.push({ label: '存储路径', value: storageConfig.path || '-' });
+    }
+    if (storage.type === 'nas') {
+      storageDetails.push(
+        { label: 'NAS 主机', value: storageConfig.host || '-' },
+        { label: '共享路径', value: storageConfig.path || '-' }
+      );
+    }
+    if (storage.type === 's3') {
+      storageDetails.push(
+        { label: 'Bucket', value: storageConfig.bucket || '-' },
+        { label: 'Region', value: storageConfig.region || '-' },
+        { label: 'Endpoint', value: storageConfig.endpoint || '-' },
+        { label: 'Access Key', value: storageConfig.access_key || '-' }
+      );
+    }
+
+    return (
+      <Descriptions size="small" column={1} bordered>
+        {storageDetails.map((item) => (
+          <Descriptions.Item key={`${storage.id}-${item.label}`} label={item.label}>
+            {item.value}
+          </Descriptions.Item>
+        ))}
+      </Descriptions>
+    );
+  };
+
+  const renderBackupConfigDetail = (config: BackupConfigRecord, index: number) => (
+    <Card
+      key={config.id}
+      size="small"
+      title={`备份配置 #${config.id}${config.name ? ` · ${config.name}` : ''}`}
+      style={{ marginBottom: index === selectedConfigs.length - 1 ? 0 : 16 }}
+    >
+      <Descriptions size="small" column={2} bordered>
+        <Descriptions.Item label="配置状态">
+          <Tag color={(config.is_enabled ?? config.enabled) ? 'green' : 'default'}>
+            {(config.is_enabled ?? config.enabled) ? '启用中' : '已停用'}
+          </Tag>
+        </Descriptions.Item>
+        <Descriptions.Item label="备份类型">
+          {backupTypeLabels[config.backup_type] || config.backup_type}
+        </Descriptions.Item>
+        <Descriptions.Item label="排程类型">
+          {scheduleTypeLabels[config.schedule_type] || config.schedule_type || '-'}
+        </Descriptions.Item>
+        <Descriptions.Item label="Cron表达式">
+          <span className="font-mono">{config.cron_expression || '-'}</span>
+        </Descriptions.Item>
+        <Descriptions.Item label="压缩">
+          {formatBoolean(config.compress)}
+        </Descriptions.Item>
+        <Descriptions.Item label="压缩级别">
+          {config.compress_level ?? '-'}
+        </Descriptions.Item>
+        <Descriptions.Item label="加密">
+          {formatBoolean(config.encryption_enabled)}
+        </Descriptions.Item>
+        <Descriptions.Item label="加密密钥">
+          {config.encryption_enabled ? maskSecret(config.encryption_key) : '未启用'}
+        </Descriptions.Item>
+        <Descriptions.Item label="保留策略">
+          {retentionTypeLabels[config.retention_type] || config.retention_type || '-'}
+        </Descriptions.Item>
+        <Descriptions.Item label="保留规则">
+          {config.retention_type === 'count'
+            ? `保留 ${config.retention_count || 0} 份`
+            : `保留 ${config.retention_days || 0} 天`}
+        </Descriptions.Item>
+        <Descriptions.Item label="成功通知">
+          {formatBoolean(config.notify_on_success)}
+        </Descriptions.Item>
+        <Descriptions.Item label="失败通知">
+          {formatBoolean(config.notify_on_failure)}
+        </Descriptions.Item>
+        <Descriptions.Item label="邮件通知">
+          {config.email_enabled ? (config.email || '已启用，未填写地址') : '未启用'}
+        </Descriptions.Item>
+        <Descriptions.Item label="Webhook 通知">
+          {config.webhook_enabled ? (config.webhook_url || '已启用，未填写地址') : '未启用'}
+        </Descriptions.Item>
+        <Descriptions.Item label="GFS保留策略" span={2}>
+          {config.gfs_tier_enabled
+            ? `已启用：日保留 ${config.gfs_son_retention_days || 0} 天，周保留 ${config.gfs_father_retention_weeks || 0} 周，月保留 ${config.gfs_grandfather_retention_months || 0} 月`
+            : '未启用'}
+        </Descriptions.Item>
+        <Descriptions.Item label="存储配置" span={2}>
+          {renderStorageConfig(config)}
+        </Descriptions.Item>
+      </Descriptions>
+    </Card>
+  );
+
   const databaseColumns = [
     { title: 'ID', dataIndex: 'id', key: 'id', width: 80, render: (id: number) => <span className="font-mono text-sm" style={{ color: 'var(--color-primary)' }}>#{id}</span> },
     { title: '名称', dataIndex: 'name', key: 'name', render: (name: string) => <span className="font-medium">{name}</span> },
     { title: '类型', dataIndex: 'database_type', key: 'database_type', width: 100, render: (type: string) => <Tag color={type === 'mysql' ? 'blue' : 'green'}>{databaseTypeLabels[type] || type}</Tag> },
     { title: '连接信息', key: 'connection', render: (_: any, record: DatabaseRecord) => <span className="text-sm text-secondary">{record.host}:{record.port}</span> },
     { title: '创建时间', dataIndex: 'created_at', key: 'created_at', width: 180, render: (time: string) => new Date(time).toLocaleString('zh-CN') },
+    {
+      title: '详情',
+      key: 'detail',
+      width: 90,
+      render: (_: any, record: DatabaseRecord) => (
+        <Button type="link" icon={<Eye size={14} />} onClick={() => handleOpenDetail(record)}>
+          详情
+        </Button>
+      )
+    },
     {
       title: '操作',
       key: 'action',
@@ -357,6 +651,71 @@ export const BackupCenter: React.FC = () => {
           </Form.Item>
         </Form>
       </Modal>
+
+      <Drawer
+        title={selectedDb ? `数据库详情：${selectedDb.name}` : '数据库详情'}
+        open={detailVisible}
+        width={780}
+        onClose={() => {
+          setDetailVisible(false);
+          setSelectedDb(null);
+          setSelectedConfigs([]);
+        }}
+        destroyOnHidden
+      >
+        {detailLoading || !selectedDb ? (
+          <div style={{ paddingTop: 32 }}>
+            <Progress percent={80} showInfo={false} status="active" />
+          </div>
+        ) : (
+          <Space direction="vertical" size={16} style={{ width: '100%' }}>
+            <Card size="small" title="数据库基本信息">
+              <Descriptions size="small" column={2} bordered>
+                <Descriptions.Item label="数据库名称">{selectedDb.name}</Descriptions.Item>
+                <Descriptions.Item label="数据库类型">
+                  {databaseTypeLabels[selectedDb.database_type] || selectedDb.database_type}
+                </Descriptions.Item>
+                <Descriptions.Item label="引擎版本">{selectedDb.engine_version || '-'}</Descriptions.Item>
+                <Descriptions.Item label="创建时间">{formatDateTime(selectedDb.created_at)}</Descriptions.Item>
+              </Descriptions>
+            </Card>
+
+            <Card size="small" title="连接设置">
+              <Descriptions size="small" column={2} bordered>
+                <Descriptions.Item label="主机地址">{selectedDb.host || '-'}</Descriptions.Item>
+                <Descriptions.Item label="端口">{selectedDb.port || '-'}</Descriptions.Item>
+                <Descriptions.Item label="用户名">{selectedDb.user || selectedDb.username || '-'}</Descriptions.Item>
+                <Descriptions.Item label="数据库名">{selectedDb.database_name || selectedDb.name || '-'}</Descriptions.Item>
+                <Descriptions.Item label="物理备份支持">
+                  {formatBoolean(selectedDb.is_physical_backup_supported)}
+                </Descriptions.Item>
+                <Descriptions.Item label="Binlog / WAL">
+                  {selectedDb.database_type === 'mysql'
+                    ? formatBoolean(selectedDb.binary_log_enabled)
+                    : formatBoolean(selectedDb.wal_enabled)}
+                </Descriptions.Item>
+                <Descriptions.Item label="Binlog路径" span={2}>
+                  {selectedDb.binary_log_path || selectedDb.wal_path || '-'}
+                </Descriptions.Item>
+                <Descriptions.Item label="备份工具路径" span={2}>
+                  {selectedDb.xtrabackup_path || '-'}
+                </Descriptions.Item>
+              </Descriptions>
+            </Card>
+
+            <Divider style={{ margin: 0 }} />
+
+            {selectedConfigs.length > 0 ? (
+              selectedConfigs.map((config, index) => renderBackupConfigDetail(config, index))
+            ) : (
+              <Empty
+                image={Empty.PRESENTED_IMAGE_SIMPLE}
+                description="当前数据库尚未找到备份配置，无法展示排程、存储、保留和通知设置。"
+              />
+            )}
+          </Space>
+        )}
+      </Drawer>
 
       <style>{`
         @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }

@@ -21,25 +21,73 @@ func NewRestoreHandler(db *gorm.DB) *RestoreHandler {
 }
 
 type CreateRestoreRequest struct {
-	WorkspaceID        uint       `json:"workspace_id" binding:"required"`
-	BackupID           uint       `json:"backup_id" binding:"required"`
-	DatabaseID         uint       `json:"database_id" binding:"required"`
-	DatabaseType       string     `json:"database_type" binding:"required"`
-	PITRTime           *time.Time `json:"pitr_time"`
-	ConfirmRestore     bool       `json:"confirm_restore"`
-	BackupBeforeRestore bool      `json:"backup_before_restore"`
+	WorkspaceID         uint       `json:"workspace_id" binding:"required"`
+	BackupID            uint       `json:"backup_id" binding:"required"`
+	DatabaseID          uint       `json:"database_id"`
+	DatabaseType        string     `json:"database_type" binding:"required"`
+	TargetKind          string     `json:"target_kind"`
+	TargetInstanceID    *uint      `json:"target_instance_id"`
+	PITRTime            *time.Time `json:"pitr_time"`
+	ConfirmRestore      bool       `json:"confirm_restore"`
+	BackupBeforeRestore bool       `json:"backup_before_restore"`
 }
 
 type CheckRestoreTargetRequest struct {
-	BackupID     uint   `json:"backup_id" binding:"required"`
-	DatabaseID   uint   `json:"database_id" binding:"required"`
-	DatabaseType string `json:"database_type" binding:"required"`
+	BackupID         uint   `json:"backup_id" binding:"required"`
+	DatabaseID       uint   `json:"database_id"`
+	DatabaseType     string `json:"database_type" binding:"required"`
+	TargetKind       string `json:"target_kind"`
+	TargetInstanceID *uint  `json:"target_instance_id"`
 }
 
 type RestoreTargetInfo struct {
 	IsOriginalInstance   bool   `json:"is_original_instance"`
 	WarningMessage       string `json:"warning_message"`
 	RequiresConfirmation bool   `json:"requires_confirmation"`
+}
+
+func normalizeTargetKind(targetKind string) string {
+	if targetKind == "" {
+		return "original"
+	}
+	return targetKind
+}
+
+func (h *RestoreHandler) resolveRestoreTarget(backup models.Backup, databaseType, targetKind string, databaseID uint, targetInstanceID *uint) (uint, string, string, bool, error) {
+	kind := normalizeTargetKind(targetKind)
+
+	switch kind {
+	case "restore_instance":
+		if targetInstanceID == nil || *targetInstanceID == 0 {
+			return 0, "", kind, false, gorm.ErrInvalidData
+		}
+
+		var instance models.RestoreInstance
+		if err := h.db.First(&instance, *targetInstanceID).Error; err != nil {
+			return 0, "", kind, false, err
+		}
+		if instance.DatabaseType != databaseType || backup.DatabaseType != databaseType {
+			return 0, "", kind, false, gorm.ErrInvalidData
+		}
+
+		return instance.ID, instance.Name, kind, false, nil
+	case "original":
+		if databaseID == 0 {
+			databaseID = backup.DatabaseID
+		}
+		isOriginalInstance := false
+		switch databaseType {
+		case "mysql":
+			isOriginalInstance = h.checkMySQLOriginalInstance(databaseID, backup.DatabaseID)
+		case "postgresql":
+			isOriginalInstance = h.checkPostgreSQLOriginalInstance(databaseID, backup.DatabaseID)
+		}
+
+		targetName := "原实例"
+		return databaseID, targetName, kind, isOriginalInstance, nil
+	default:
+		return 0, "", kind, false, gorm.ErrInvalidData
+	}
 }
 
 func (h *RestoreHandler) GetAll(c *gin.Context) {
@@ -65,22 +113,25 @@ func (h *RestoreHandler) CheckRestoreTarget(c *gin.Context) {
 		return
 	}
 
-	isOriginalInstance := false
-	warningMessage := ""
-
-	switch req.DatabaseType {
-	case "mysql":
-		isOriginalInstance = h.checkMySQLOriginalInstance(req.DatabaseID, backup.DatabaseID)
-	case "postgresql":
-		isOriginalInstance = h.checkPostgreSQLOriginalInstance(req.DatabaseID, backup.DatabaseID)
+	_, _, _, isOriginalInstance, err := h.resolveRestoreTarget(
+		backup,
+		req.DatabaseType,
+		req.TargetKind,
+		req.DatabaseID,
+		req.TargetInstanceID,
+	)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid restore target"})
+		return
 	}
 
+	warningMessage := ""
 	if isOriginalInstance {
 		warningMessage = "警告：您正在恢复到原始数据库实例！当前数据库数据将被覆盖。建议在恢复前先创建一个当前数据的备份。是否继续？"
 	}
 
 	c.JSON(http.StatusOK, gin.H{
-		"is_original_instance":   isOriginalInstance,
+		"is_original_instance":  isOriginalInstance,
 		"warning_message":       warningMessage,
 		"requires_confirmation": isOriginalInstance,
 	})
@@ -135,33 +186,40 @@ func (h *RestoreHandler) Create(c *gin.Context) {
 		return
 	}
 
-	isOriginalInstance := false
-	switch req.DatabaseType {
-	case "mysql":
-		isOriginalInstance = h.checkMySQLOriginalInstance(req.DatabaseID, backup.DatabaseID)
-	case "postgresql":
-		isOriginalInstance = h.checkPostgreSQLOriginalInstance(req.DatabaseID, backup.DatabaseID)
+	targetDatabaseID, targetName, targetKind, isOriginalInstance, err := h.resolveRestoreTarget(
+		backup,
+		req.DatabaseType,
+		req.TargetKind,
+		req.DatabaseID,
+		req.TargetInstanceID,
+	)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid restore target"})
+		return
 	}
 
 	if isOriginalInstance && !req.ConfirmRestore {
 		c.JSON(http.StatusConflict, gin.H{
-			"error":                    "恢复到原始数据库实例需要确认",
-			"requires_confirmation":    true,
-			"warning_message":          "警告：您正在恢复到原始数据库实例！当前数据库数据将被覆盖。",
+			"error":                           "恢复到原始数据库实例需要确认",
+			"requires_confirmation":           true,
+			"warning_message":                 "警告：您正在恢复到原始数据库实例！当前数据库数据将被覆盖。",
 			"backup_before_restore_suggested": true,
 		})
 		return
 	}
 
 	restoreRecord := models.Restore{
-		WorkspaceID:   req.WorkspaceID,
-		BackupID:      req.BackupID,
-		DatabaseID:    req.DatabaseID,
-		DatabaseType:  req.DatabaseType,
-		Status:        "pending",
-		RestoreTime:   time.Now(),
-		PITRTime:     req.PITRTime,
-		Progress:     0,
+		WorkspaceID:      req.WorkspaceID,
+		BackupID:         req.BackupID,
+		DatabaseID:       targetDatabaseID,
+		DatabaseType:     req.DatabaseType,
+		TargetKind:       targetKind,
+		TargetInstanceID: req.TargetInstanceID,
+		TargetName:       targetName,
+		Status:           "pending",
+		RestoreTime:      time.Now(),
+		PITRTime:         req.PITRTime,
+		Progress:         0,
 	}
 
 	if err := h.db.Create(&restoreRecord).Error; err != nil {
@@ -174,10 +232,11 @@ func (h *RestoreHandler) Create(c *gin.Context) {
 			Type:         scheduler.TaskTypeRestore,
 			TaskID:       restoreRecord.ID,
 			WorkspaceID:  req.WorkspaceID,
-			DatabaseID:   req.DatabaseID,
+			DatabaseID:   targetDatabaseID,
 			DatabaseType: req.DatabaseType,
+			TargetKind:   targetKind,
 			BackupID:     req.BackupID,
-			PITRTime:    req.PITRTime,
+			PITRTime:     req.PITRTime,
 			Config: map[string]interface{}{
 				"backup_before_restore": req.BackupBeforeRestore,
 			},
@@ -245,7 +304,7 @@ func (h *RestoreHandler) GetRestoreLogs(c *gin.Context) {
 		"restore_id": restoreRecord.ID,
 		"status":     restoreRecord.Status,
 		"progress":   restoreRecord.Progress,
-		"error_msg": restoreRecord.ErrorMsg,
+		"error_msg":  restoreRecord.ErrorMsg,
 	})
 }
 
@@ -307,8 +366,8 @@ func (h *RestoreHandler) GetPITRTimeRange(c *gin.Context) {
 	maxTime := time.Now()
 
 	c.JSON(http.StatusOK, gin.H{
-		"min_time": minTime,
-		"max_time": maxTime,
+		"min_time":    minTime,
+		"max_time":    maxTime,
 		"backup_time": backup.BackupTime,
 	})
 }

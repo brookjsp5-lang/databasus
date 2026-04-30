@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"encoding/json"
 	"net/http"
 	"strconv"
 
@@ -115,6 +116,10 @@ func (h *SettingsHandler) GetAlertSettings(c *gin.Context) {
 		"alert_email",
 		"alert_dingtalk_enabled",
 		"alert_dingtalk_webhook",
+		"alert_wechat_enabled",
+		"alert_wechat_webhook",
+		"alert_levels",
+		"alert_frequency",
 	}
 
 	var settings []models.SystemSetting
@@ -123,20 +128,44 @@ func (h *SettingsHandler) GetAlertSettings(c *gin.Context) {
 		return
 	}
 
-	result := make(map[string]string)
-	for _, s := range settings {
-		result[s.Key] = s.Value
+	result := map[string]interface{}{
+		"alert_email_enabled":     false,
+		"alert_email":             "",
+		"alert_dingtalk_enabled":  false,
+		"alert_dingtalk_webhook":  "",
+		"alert_wechat_enabled":    false,
+		"alert_wechat_webhook":    "",
+		"alert_levels":            []string{"warning", "error"},
+		"alert_frequency":         "immediate",
 	}
 
-	c.JSON(http.StatusOK, gin.H{"settings": result})
+	for _, s := range settings {
+		switch s.Key {
+		case "alert_email_enabled", "alert_dingtalk_enabled", "alert_wechat_enabled":
+			result[s.Key] = s.Value == "true"
+		case "alert_levels":
+			var levels []string
+			if err := json.Unmarshal([]byte(s.Value), &levels); err == nil && len(levels) > 0 {
+				result[s.Key] = levels
+			}
+		default:
+			result[s.Key] = s.Value
+		}
+	}
+
+	c.JSON(http.StatusOK, result)
 }
 
 func (h *SettingsHandler) SetAlertSettings(c *gin.Context) {
 	var req struct {
-		AlertEmailEnabled    bool   `json:"alert_email_enabled"`
-		AlertEmail          string `json:"alert_email"`
-		AlertDingtalkEnabled bool  `json:"alert_dingtalk_enabled"`
+		AlertEmailEnabled     bool     `json:"alert_email_enabled"`
+		AlertEmail            string   `json:"alert_email"`
+		AlertDingtalkEnabled  bool     `json:"alert_dingtalk_enabled"`
 		AlertDingtalkWebhook string `json:"alert_dingtalk_webhook"`
+		AlertWechatEnabled   bool     `json:"alert_wechat_enabled"`
+		AlertWechatWebhook   string   `json:"alert_wechat_webhook"`
+		AlertLevels          []string `json:"alert_levels"`
+		AlertFrequency       string   `json:"alert_frequency"`
 	}
 
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -144,11 +173,26 @@ func (h *SettingsHandler) SetAlertSettings(c *gin.Context) {
 		return
 	}
 
+	alertLevels := req.AlertLevels
+	if len(alertLevels) == 0 {
+		alertLevels = []string{"warning", "error"}
+	}
+
+	levelsJSON, _ := json.Marshal(alertLevels)
+	alertFrequency := req.AlertFrequency
+	if alertFrequency == "" {
+		alertFrequency = "immediate"
+	}
+
 	settings := []models.SystemSetting{
 		{Key: "alert_email_enabled", Value: boolToString(req.AlertEmailEnabled), Type: "boolean"},
 		{Key: "alert_email", Value: req.AlertEmail, Type: "string"},
 		{Key: "alert_dingtalk_enabled", Value: boolToString(req.AlertDingtalkEnabled), Type: "boolean"},
 		{Key: "alert_dingtalk_webhook", Value: req.AlertDingtalkWebhook, Type: "string"},
+		{Key: "alert_wechat_enabled", Value: boolToString(req.AlertWechatEnabled), Type: "boolean"},
+		{Key: "alert_wechat_webhook", Value: req.AlertWechatWebhook, Type: "string"},
+		{Key: "alert_levels", Value: string(levelsJSON), Type: "json"},
+		{Key: "alert_frequency", Value: alertFrequency, Type: "string"},
 	}
 
 	for _, s := range settings {

@@ -11,6 +11,7 @@ import { Storages } from './pages/Storages';
 import { Alerts } from './pages/Alerts';
 import { AuditLogs } from './pages/AuditLogs';
 import { DatabaseWizard } from './pages/DatabaseWizard';
+import { UserGuide } from './pages/UserGuide';
 import { AppLayout } from './components/Layout';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { useAuthStore } from './store';
@@ -83,6 +84,7 @@ function App() {
             <Route path="/storages" element={<ProtectedRoute><Storages /></ProtectedRoute>} />
             <Route path="/alerts" element={<ProtectedRoute><Alerts /></ProtectedRoute>} />
             <Route path="/audit-logs" element={<ProtectedRoute><AuditLogs /></ProtectedRoute>} />
+            <Route path="/user-guide" element={<ProtectedRoute><UserGuide /></ProtectedRoute>} />
             <Route path="/database-wizard" element={<ProtectedRoute><DatabaseWizard /></ProtectedRoute>} />
             
             {/* 默认重定向 */}

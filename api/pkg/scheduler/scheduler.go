@@ -51,25 +51,26 @@ type Task struct {
 }
 
 type TaskPayload struct {
-	Type         TaskType            `json:"type"`
-	TaskID       uint                `json:"task_id"`
-	WorkspaceID  uint                `json:"workspace_id"`
-	DatabaseID   uint                `json:"database_id"`
-	DatabaseType string              `json:"database_type"`
-	BackupType   string              `json:"backup_type,omitempty"`
-	BackupID     uint                `json:"backup_id,omitempty"`
-	PITRTime    *time.Time          `json:"pitr_time,omitempty"`
-	Config      map[string]any      `json:"config,omitempty"`
+	Type         TaskType       `json:"type"`
+	TaskID       uint           `json:"task_id"`
+	WorkspaceID  uint           `json:"workspace_id"`
+	DatabaseID   uint           `json:"database_id"`
+	DatabaseType string         `json:"database_type"`
+	TargetKind   string         `json:"target_kind,omitempty"`
+	BackupType   string         `json:"backup_type,omitempty"`
+	BackupID     uint           `json:"backup_id,omitempty"`
+	PITRTime     *time.Time     `json:"pitr_time,omitempty"`
+	Config       map[string]any `json:"config,omitempty"`
 }
 
 type BackupProgress struct {
-	TaskID      uint     `json:"task_id"`
-	BackupID    uint     `json:"backup_id"`
-	DatabaseID  uint     `json:"database_id"`
-	Status      string   `json:"status"`
-	Progress    float64  `json:"progress"`
-	Message     string   `json:"message"`
-	StartedAt   time.Time `json:"started_at"`
+	TaskID     uint      `json:"task_id"`
+	BackupID   uint      `json:"backup_id"`
+	DatabaseID uint      `json:"database_id"`
+	Status     string    `json:"status"`
+	Progress   float64   `json:"progress"`
+	Message    string    `json:"message"`
+	StartedAt  time.Time `json:"started_at"`
 }
 
 type Scheduler struct {
@@ -447,13 +448,76 @@ func (s *Scheduler) getDatabaseInfo(databaseType string, databaseID uint) (inter
 	}
 }
 
+func (s *Scheduler) getRestoreInstanceInfo(databaseType string, instanceID uint) (interface{}, error) {
+	var instance models.RestoreInstance
+	if err := s.db.First(&instance, instanceID).Error; err != nil {
+		return nil, fmt.Errorf("failed to get restore instance: %w", err)
+	}
+	if instance.DatabaseType != databaseType {
+		return nil, fmt.Errorf("restore instance database type mismatch")
+	}
+
+	switch databaseType {
+	case "mysql":
+		return models.MySQLDatabase{
+			ID:             instance.ID,
+			Name:           instance.Name,
+			Host:           instance.Host,
+			Port:           instance.Port,
+			User:           instance.User,
+			Password:       instance.Password,
+			DatabaseName:   instance.DatabaseName,
+			EngineVersion:  instance.EngineVersion,
+			DataDirectory:  instance.DataDirectory,
+			InstanceID:     instance.InstanceID,
+			BinaryLogPath:  instance.BinaryLogPath,
+			XtraBackupPath: instance.XtraBackupPath,
+		}, nil
+	case "postgresql":
+		return models.PostgreSQLDatabase{
+			ID:            instance.ID,
+			Name:          instance.Name,
+			Host:          instance.Host,
+			Port:          instance.Port,
+			User:          instance.User,
+			Password:      instance.Password,
+			DatabaseName:  instance.DatabaseName,
+			EngineVersion: instance.EngineVersion,
+			DataDirectory: instance.DataDirectory,
+			InstanceID:    instance.InstanceID,
+			WALPath:       instance.WALPath,
+		}, nil
+	default:
+		return nil, fmt.Errorf("unsupported database type: %s", databaseType)
+	}
+}
+
 func (s *Scheduler) performMySQLRestore(payload TaskPayload, backup models.Backup) error {
-	dbInfo, err := s.getDatabaseInfo(payload.DatabaseType, payload.DatabaseID)
+	var (
+		dbInfo interface{}
+		err    error
+	)
+	if payload.TargetKind == "restore_instance" {
+		dbInfo, err = s.getRestoreInstanceInfo(payload.DatabaseType, payload.DatabaseID)
+	} else {
+		dbInfo, err = s.getDatabaseInfo(payload.DatabaseType, payload.DatabaseID)
+	}
 	if err != nil {
 		return err
 	}
 
 	mysqlDB := dbInfo.(models.MySQLDatabase)
+	if payload.TargetKind == "restore_instance" {
+		sourceInfo, sourceErr := s.getDatabaseInfo(backup.DatabaseType, backup.DatabaseID)
+		if sourceErr == nil {
+			sourceDB := sourceInfo.(models.MySQLDatabase)
+			mysqlDB.BinaryLogEnabled = sourceDB.BinaryLogEnabled
+			mysqlDB.BinaryLogPath = sourceDB.BinaryLogPath
+			if mysqlDB.XtraBackupPath == "" {
+				mysqlDB.XtraBackupPath = sourceDB.XtraBackupPath
+			}
+		}
+	}
 
 	s.broadcastProgress(payload, "running", 30, "正在准备恢复环境")
 
@@ -525,12 +589,29 @@ func (s *Scheduler) directMySQLRestore(db models.MySQLDatabase, backupPath, xtra
 }
 
 func (s *Scheduler) performPostgreSQLRestore(payload TaskPayload, backup models.Backup) error {
-	dbInfo, err := s.getDatabaseInfo(payload.DatabaseType, payload.DatabaseID)
+	var (
+		dbInfo interface{}
+		err    error
+	)
+	if payload.TargetKind == "restore_instance" {
+		dbInfo, err = s.getRestoreInstanceInfo(payload.DatabaseType, payload.DatabaseID)
+	} else {
+		dbInfo, err = s.getDatabaseInfo(payload.DatabaseType, payload.DatabaseID)
+	}
 	if err != nil {
 		return err
 	}
 
 	pgDB := dbInfo.(models.PostgreSQLDatabase)
+	if payload.TargetKind == "restore_instance" {
+		sourceInfo, sourceErr := s.getDatabaseInfo(backup.DatabaseType, backup.DatabaseID)
+		if sourceErr == nil {
+			sourceDB := sourceInfo.(models.PostgreSQLDatabase)
+			if pgDB.WALPath == "" {
+				pgDB.WALPath = sourceDB.WALPath
+			}
+		}
+	}
 
 	s.broadcastProgress(payload, "running", 30, "正在准备恢复环境")
 
@@ -711,8 +792,9 @@ func (s *Scheduler) EnqueueRestoreTask(restore *models.Restore) {
 		WorkspaceID:  restore.WorkspaceID,
 		DatabaseID:   restore.DatabaseID,
 		DatabaseType: restore.DatabaseType,
+		TargetKind:   restore.TargetKind,
 		BackupID:     restore.BackupID,
-		PITRTime:    restore.PITRTime,
+		PITRTime:     restore.PITRTime,
 	}
 	s.EnqueueTask(payload)
 }

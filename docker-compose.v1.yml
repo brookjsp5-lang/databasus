@@ -1,0 +1,78 @@
+version: "2.4"
+
+services:
+  api:
+    build:
+      context: ./api
+      dockerfile: Dockerfile
+    container_name: databus-api
+    ports:
+      - "6002:6001"
+    environment:
+      - PORT=6001
+      - DB_HOST=postgres
+      - DB_PORT=5432
+      - DB_USER=postgres
+      - DB_PASSWORD=postgres123
+      - DB_NAME=datatrue
+      - DB_SSLMODE=disable
+      - REDIS_ADDR=redis:6379
+      - REDIS_PASSWORD=
+      - JWT_SECRET=your-super-secret-jwt-key-change-in-production
+      - JWT_EXPIRES_IN=24
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    networks:
+      - databus-network
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: databus-frontend
+    ports:
+      - "8088:80"
+    depends_on:
+      - api
+    networks:
+      - databus-network
+    restart: unless-stopped
+
+  postgres:
+    image: postgres:16-alpine
+    container_name: databus-postgres
+    environment:
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=postgres123
+      - POSTGRES_DB=datatrue
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - databus-network
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    container_name: databus-redis
+    volumes:
+      - redis_data:/data
+    networks:
+      - databus-network
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+  redis_data:
+
+networks:
+  databus-network:
+    driver: bridge

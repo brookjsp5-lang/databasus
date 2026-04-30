@@ -1,11 +1,9 @@
 import React, { ReactNode, useState, useEffect } from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import { Menu, X, ChevronDown, LogOut, Bell } from 'lucide-react';
-import { Layout as AntLayout, Drawer } from 'antd';
+import { Drawer, Tooltip } from 'antd';
 import { useAuthStore } from '../store';
 import { WorkspaceSelector } from './WorkspaceSelector';
-
-const { Header, Sider, Content } = AntLayout;
 
 /**
  * Layout组件属性接口
@@ -38,14 +36,15 @@ const menuItems: MenuItem[] = [
   { key: 'storages', icon: '▥', label: '存储管理', path: '/storages' },
   { key: 'alerts', icon: '⚠', label: '告警通知', path: '/alerts' },
   { key: 'audit-logs', icon: '📋', label: '审计日志', path: '/audit-logs' },
+  { key: 'user-guide', icon: '📘', label: '使用教程', path: '/user-guide' },
   { key: 'settings', icon: '⚙', label: '系统设置', path: '/settings' },
 ];
 
 /**
  * 移动端断点
- * @description 小于此宽度时显示移动端布局
+ * @description 小于此宽度时显示移动端抽屉布局，覆盖常见平板与窄窗口
  */
-const MOBILE_BREAKPOINT = 768;
+const MOBILE_BREAKPOINT = 1024;
 
 /**
  * AppLayout 主布局组件
@@ -75,27 +74,37 @@ export const AppLayout: React.FC<LayoutProps> = ({ children }) => {
   const [mobileDrawerOpen, setMobileDrawerOpen] = useState(false);
   // 是否为移动端
   const [isMobile, setIsMobile] = useState(false);
+  const mobileHeaderCompact = isMobile;
 
   // 监听窗口大小变化
   useEffect(() => {
-    const checkMobile = () => {
-      const mobile = window.innerWidth < MOBILE_BREAKPOINT;
+    const mediaQuery = window.matchMedia(`(max-width: ${MOBILE_BREAKPOINT - 1}px)`);
+
+    const syncLayoutMode = (mobile: boolean) => {
       setIsMobile(mobile);
-      // 移动端默认关闭侧边栏
       if (mobile) {
         setSidebarOpen(false);
+      } else {
+        setMobileDrawerOpen(false);
       }
     };
 
-    // 初始检查
-    checkMobile();
+    const handleMediaChange = (event: MediaQueryListEvent) => {
+      syncLayoutMode(event.matches);
+    };
 
-    // 添加监听器
-    window.addEventListener('resize', checkMobile);
+    syncLayoutMode(mediaQuery.matches);
+    mediaQuery.addEventListener('change', handleMediaChange);
 
-    // 清理
-    return () => window.removeEventListener('resize', checkMobile);
+    return () => mediaQuery.removeEventListener('change', handleMediaChange);
   }, []);
+
+  useEffect(() => {
+    setDropdownOpen(false);
+    if (isMobile) {
+      setMobileDrawerOpen(false);
+    }
+  }, [location.pathname, isMobile]);
 
   // 获取当前路由
   const currentPath = location.pathname.split('/')[1] || 'dashboard';
@@ -213,7 +222,7 @@ export const AppLayout: React.FC<LayoutProps> = ({ children }) => {
    * 渲染侧边栏内容
    * @description 渲染导航菜单和状态信息
    */
-  const renderSidebarContent = () => (
+  const renderSidebarContent = (mobile: boolean = false) => (
     <>
       <nav style={{
         padding: '16px 12px 16px 16px',
@@ -225,10 +234,11 @@ export const AppLayout: React.FC<LayoutProps> = ({ children }) => {
       </nav>
 
       <div style={{
-        position: 'absolute',
-        bottom: '24px',
-        left: '12px',
-        right: '12px',
+        position: mobile ? 'static' : 'absolute',
+        bottom: mobile ? 'auto' : '24px',
+        left: mobile ? 'auto' : '12px',
+        right: mobile ? 'auto' : '12px',
+        marginTop: mobile ? '24px' : 0,
         padding: '16px',
         background: 'rgba(0, 240, 255, 0.03)',
         borderRadius: '12px',
@@ -266,7 +276,7 @@ export const AppLayout: React.FC<LayoutProps> = ({ children }) => {
     }}>
       {/* 顶部导航栏 */}
       <header className="cyber-header" style={{
-        padding: '0 24px',
+        padding: mobileHeaderCompact ? '0 16px' : '0 24px',
         height: '64px',
         display: 'flex',
         alignItems: 'center',
@@ -275,44 +285,59 @@ export const AppLayout: React.FC<LayoutProps> = ({ children }) => {
         top: 0,
         zIndex: 100
       }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: mobileHeaderCompact ? '12px' : '16px', minWidth: 0 }}>
           {/* 移动端菜单按钮 */}
-          <button
-            onClick={() => setMobileDrawerOpen(true)}
-            style={{
-              background: 'none',
-              border: 'none',
-              color: 'var(--color-primary)',
-              cursor: 'pointer',
-              padding: '8px',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center'
-            }}
-          >
-            <Menu size={20} />
-          </button>
+          {isMobile && (
+            <Tooltip title={mobileDrawerOpen ? '关闭导航菜单' : '打开导航菜单'}>
+              <button
+                type="button"
+                aria-label={mobileDrawerOpen ? '关闭导航菜单' : '打开导航菜单'}
+                aria-expanded={mobileDrawerOpen}
+                aria-controls="mobile-navigation-drawer"
+                onClick={() => setMobileDrawerOpen((open) => !open)}
+                style={{
+                  background: 'none',
+                  border: 'none',
+                  color: 'var(--color-primary)',
+                  cursor: 'pointer',
+                  padding: '8px',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  borderRadius: '8px'
+                }}
+              >
+                {mobileDrawerOpen ? <X size={20} /> : <Menu size={20} />}
+              </button>
+            </Tooltip>
+          )}
 
           {/* 桌面端侧边栏切换按钮 */}
           {!isMobile && (
-            <button
-              onClick={() => setSidebarOpen(!sidebarOpen)}
-              style={{
-                background: 'none',
-                border: 'none',
-                color: 'var(--color-primary)',
-                cursor: 'pointer',
-                padding: '8px',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center'
-              }}
-            >
-              {sidebarOpen ? <X size={20} /> : <Menu size={20} />}
-            </button>
+            <Tooltip title={sidebarOpen ? '收起侧边栏' : '展开侧边栏'}>
+              <button
+                type="button"
+                aria-label={sidebarOpen ? '收起侧边栏' : '展开侧边栏'}
+                aria-expanded={sidebarOpen}
+                onClick={() => setSidebarOpen(!sidebarOpen)}
+                style={{
+                  background: 'none',
+                  border: 'none',
+                  color: 'var(--color-primary)',
+                  cursor: 'pointer',
+                  padding: '8px',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  borderRadius: '8px'
+                }}
+              >
+                {sidebarOpen ? <X size={20} /> : <Menu size={20} />}
+              </button>
+            </Tooltip>
           )}
 
-          <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: mobileHeaderCompact ? '10px' : '12px', minWidth: 0 }}>
             <div style={{
               width: '36px',
               height: '36px',
@@ -328,24 +353,27 @@ export const AppLayout: React.FC<LayoutProps> = ({ children }) => {
             }}>
               D
             </div>
-            <div>
+            <div style={{ minWidth: 0 }}>
               <div style={{
                 fontFamily: 'var(--font-display)',
-                fontSize: '16px',
+                fontSize: mobileHeaderCompact ? '15px' : '16px',
                 fontWeight: '600',
                 color: 'var(--color-text)',
-                letterSpacing: '2px'
+                letterSpacing: mobileHeaderCompact ? '1px' : '2px',
+                whiteSpace: 'nowrap'
               }}>
                 DataTrue
               </div>
-              <div style={{
-                fontSize: '10px',
-                color: 'var(--color-text-muted)',
-                letterSpacing: '1px',
-                textTransform: 'uppercase'
-              }}>
-                Database Management System
-              </div>
+              {!mobileHeaderCompact && (
+                <div style={{
+                  fontSize: '10px',
+                  color: 'var(--color-text-muted)',
+                  letterSpacing: '1px',
+                  textTransform: 'uppercase'
+                }}>
+                  Database Management System
+                </div>
+              )}
             </div>
           </div>
 
@@ -357,74 +385,91 @@ export const AppLayout: React.FC<LayoutProps> = ({ children }) => {
           )}
         </div>
 
-        <div style={{ display: 'flex', alignItems: 'center', gap: '20px' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: mobileHeaderCompact ? '12px' : '20px', flexShrink: 0 }}>
           {/* 通知按钮 */}
-          <button style={{
-            background: 'none',
-            border: 'none',
-            color: 'var(--color-text-muted)',
-            cursor: 'pointer',
-            padding: '8px',
-            position: 'relative',
-            transition: 'color 0.3s ease'
-          }}>
-            <Bell size={20} />
-            <span style={{
-              position: 'absolute',
-              top: '4px',
-              right: '4px',
-              width: '8px',
-              height: '8px',
-              borderRadius: '50%',
-              background: 'var(--color-accent)'
-            }} />
-          </button>
+          <Tooltip title="通知中心（即将上线）">
+            <button
+              type="button"
+              aria-label="通知中心（即将上线）"
+              style={{
+                background: 'none',
+                border: 'none',
+                color: 'var(--color-text-muted)',
+                cursor: 'pointer',
+                padding: '8px',
+                position: 'relative',
+                transition: 'color 0.3s ease',
+                borderRadius: '8px'
+              }}
+            >
+              <Bell size={20} />
+              <span style={{
+                position: 'absolute',
+                top: '4px',
+                right: '4px',
+                width: '8px',
+                height: '8px',
+                borderRadius: '50%',
+                background: 'var(--color-accent)'
+              }} />
+            </button>
+          </Tooltip>
 
           {/* 用户下拉菜单 */}
           <div style={{ position: 'relative' }}>
-            <button
-              onClick={() => setDropdownOpen(!dropdownOpen)}
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: '8px',
-                background: 'none',
-                border: 'none',
-                cursor: 'pointer',
-                padding: '8px 12px',
-                borderRadius: '8px',
-                transition: 'background 0.3s ease'
-              }}
-            >
-              <div style={{
-                width: '32px',
-                height: '32px',
-                borderRadius: '50%',
-                background: 'linear-gradient(135deg, var(--color-primary) 0%, var(--color-secondary) 100%)',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                fontFamily: 'var(--font-display)',
-                fontWeight: '600',
-                fontSize: '14px',
-                color: 'var(--color-bg-dark)'
-              }}>
-                {user?.username?.charAt(0)?.toUpperCase() || 'U'}
-              </div>
-              <span style={{
-                fontFamily: 'var(--font-body)',
-                fontSize: '14px',
-                fontWeight: '500',
-                color: 'var(--color-text)'
-              }}>
-                {user?.username || 'User'}
-              </span>
-              <ChevronDown size={16} style={{
-                color: 'var(--color-text-muted)',
-                transform: dropdownOpen ? 'rotate(180deg)' : 'rotate(0deg)',
-                transition: 'transform 0.3s ease'
-              }} />
-            </button>
+            <Tooltip title="账户菜单">
+              <button
+                type="button"
+                aria-label="账户菜单"
+                aria-expanded={dropdownOpen}
+                aria-haspopup="menu"
+                onClick={() => setDropdownOpen(!dropdownOpen)}
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '8px',
+                  background: 'none',
+                  border: 'none',
+                  cursor: 'pointer',
+                  padding: '8px 12px',
+                  borderRadius: '8px',
+                  transition: 'background 0.3s ease',
+                  minWidth: 0
+                }}
+              >
+                <div style={{
+                  width: '32px',
+                  height: '32px',
+                  borderRadius: '50%',
+                  background: 'linear-gradient(135deg, var(--color-primary) 0%, var(--color-secondary) 100%)',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  fontFamily: 'var(--font-display)',
+                  fontWeight: '600',
+                  fontSize: '14px',
+                  color: 'var(--color-bg-dark)'
+                }}>
+                  {user?.username?.charAt(0)?.toUpperCase() || 'U'}
+                </div>
+                {!mobileHeaderCompact && (
+                  <span style={{
+                    fontFamily: 'var(--font-body)',
+                    fontSize: '14px',
+                    fontWeight: '500',
+                    color: 'var(--color-text)',
+                    whiteSpace: 'nowrap'
+                  }}>
+                    {user?.username || 'User'}
+                  </span>
+                )}
+                <ChevronDown size={16} style={{
+                  color: 'var(--color-text-muted)',
+                  transform: dropdownOpen ? 'rotate(180deg)' : 'rotate(0deg)',
+                  transition: 'transform 0.3s ease'
+                }} />
+              </button>
+            </Tooltip>
 
             {dropdownOpen && (
               <div className="cyber-dropdown" style={{
@@ -489,6 +534,7 @@ export const AppLayout: React.FC<LayoutProps> = ({ children }) => {
         {/* 移动端抽屉 */}
         {isMobile && (
           <Drawer
+            id="mobile-navigation-drawer"
             title={
               <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                 <div style={{
@@ -515,6 +561,7 @@ export const AppLayout: React.FC<LayoutProps> = ({ children }) => {
             onClose={() => setMobileDrawerOpen(false)}
             open={mobileDrawerOpen}
             width={280}
+            destroyOnHidden
             styles={{
               header: {
                 background: 'var(--color-bg-sidebar)',
@@ -531,14 +578,14 @@ export const AppLayout: React.FC<LayoutProps> = ({ children }) => {
             <div style={{ padding: '12px 16px', borderBottom: '1px solid var(--color-border-light)' }}>
               <WorkspaceSelector />
             </div>
-            {renderSidebarContent()}
+            {renderSidebarContent(true)}
           </Drawer>
         )}
 
         {/* 主内容区域 */}
         <main style={{
           flex: 1,
-          padding: '24px',
+          padding: mobileHeaderCompact ? '16px' : '24px',
           minHeight: 'calc(100vh - 64px)',
           background: 'var(--color-bg-dark)',
           position: 'relative',
